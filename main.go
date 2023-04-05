@@ -15,25 +15,23 @@ import (
 )
 
 func PathToURI(path string) lsp.DocumentURI {
-  path = filepath.ToSlash(path)
-  parts := strings.SplitN(path, "/", 2)
+	path = filepath.ToSlash(path)
+	parts := strings.SplitN(path, "/", 2)
 
-  head := parts[0]
-  if head != "" {
-    head = "/" + head
-  }
+	head := parts[0]
+	if head != "" {
+		head = "/" + head
+	}
 
-  rest := ""
-  if len(parts) > 1 {
-    rest = "/" + parts[1]
-  }
+	rest := ""
+	if len(parts) > 1 {
+		rest = "/" + parts[1]
+	}
 
-  return lsp.DocumentURI("file://" + head + rest)
+	return lsp.DocumentURI("file://" + head + rest)
 }
 
-type Application struct {
-
-}
+type Application struct{}
 
 type stdrwc struct{}
 
@@ -72,76 +70,84 @@ func (h lspHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrp
 	go h.Handler.Handle(ctx, conn, req)
 }
 
+func constructPrompt() string {
+	return ""
+}
+
+const serverEndpoint = "https://sourcegraph.sourcegraph.com"
+
+var root lsp.DocumentURI
+
 func newHandler() (jsonrpc2.Handler, io.Closer) {
-  return jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
-    if req.Method == "initialize" {
-      var params lsp.InitializeParams
-      if err := json.Unmarshal(*req.Params, &params); err != nil {
-        return nil, err
-      }
-      kind := lsp.TDSKIncremental
-      return lsp.InitializeResult{
-        Capabilities: lsp.ServerCapabilities{
-          TextDocumentSync: &lsp.TextDocumentSyncOptionsOrKind{
-            Kind: &kind,
-          },
-          CompletionProvider: nil,
-          DefinitionProvider: false,
-          TypeDefinitionProvider: false,
-          DocumentFormattingProvider: false,
-          DocumentSymbolProvider: false,
-          HoverProvider: false,
-          ReferencesProvider: false,
-          RenameProvider: false,
-          WorkspaceSymbolProvider: false,
-          ImplementationProvider: false,
-          XWorkspaceReferencesProvider: false,
-          XDefinitionProvider: false,
-          XWorkspaceSymbolByProperties: false,
-          SignatureHelpProvider: nil,
-        },
-      }, nil
-      // return nil, sendDiagnostics(ctx, conn, "Diagnostics", "From here", []string{"main.go"})
-    }
-    if req.Method == "textDocument/didSave" {
-      return nil, sendDiagnostics(ctx, conn, "Diagnostics", "go", []string{"/home/pjlast/workspace/llmsp/main.go"})
-    }
-    return nil, sendDiagnostics(ctx, conn, "Diagnostics", "From here", []string{"/home/pjlast/workspace/llmsp/main.go"})
-  }), ioutil.NopCloser(strings.NewReader(""))
+	return jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
+		if req.Method == "initialize" {
+			var params lsp.InitializeParams
+			if err := json.Unmarshal(*req.Params, &params); err != nil {
+				return nil, err
+			}
+			root = params.Root()
+			kind := lsp.TDSKIncremental
+			return lsp.InitializeResult{
+				Capabilities: lsp.ServerCapabilities{
+					TextDocumentSync: &lsp.TextDocumentSyncOptionsOrKind{
+						Kind: &kind,
+					},
+					CompletionProvider:           nil,
+					DefinitionProvider:           false,
+					TypeDefinitionProvider:       false,
+					DocumentFormattingProvider:   false,
+					DocumentSymbolProvider:       false,
+					HoverProvider:                false,
+					ReferencesProvider:           false,
+					RenameProvider:               false,
+					WorkspaceSymbolProvider:      false,
+					ImplementationProvider:       false,
+					XWorkspaceReferencesProvider: false,
+					XDefinitionProvider:          false,
+					XWorkspaceSymbolByProperties: false,
+					SignatureHelpProvider:        nil,
+				},
+			}, nil
+			// return nil, sendDiagnostics(ctx, conn, "Diagnostics", "From here", []string{"main.go"})
+		}
+		if req.Method == "textDocument/didSave" {
+			return nil, sendDiagnostics(ctx, conn, "Diagnostics", "go", []string{"/home/pjlast/workspace/llmsp/main.go"})
+		}
+		return nil, nil
+	}), ioutil.NopCloser(strings.NewReader(""))
 }
 
 func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, diags string, source string, files []string) error {
-  params := lsp.PublishDiagnosticsParams{
-    URI: PathToURI("/home/pjlast/workspace/llmsp/main.go"),
-    Diagnostics: make([]lsp.Diagnostic, 1),
-  }
-  params.Diagnostics[0] = lsp.Diagnostic{
-    Range: lsp.Range{
-      Start: lsp.Position{
-        Line: 13,
-        Character: 3,
-      },
-      End: lsp.Position{
-        Line: 13,
-        Character: 5,
-      },
-    },
-    Severity: lsp.Warning,
-    Message: "git gud bro",
-  }
-  if err := conn.Notify(ctx, "textDocument/publishDiagnostics", params); err != nil {
-    return err
-  }
+	params := lsp.PublishDiagnosticsParams{
+		URI:         root + "/main.go",
+		Diagnostics: make([]lsp.Diagnostic, 1),
+	}
+	params.Diagnostics[0] = lsp.Diagnostic{
+		Range: lsp.Range{
+			Start: lsp.Position{
+				Line:      0,
+				Character: 0,
+			},
+			End: lsp.Position{
+				Line: 20,
+			},
+		},
+		Severity: lsp.Info,
+		Message:  "git gud bro",
+	}
+	if err := conn.Notify(ctx, "textDocument/publishDiagnostics", params); err != nil {
+		return err
+	}
 
-  return nil
+	return nil
 }
 
 func main() {
-  handler, closer := newHandler()
+	handler, closer := newHandler()
 
-  <-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), handler).DisconnectNotify()
-  err := closer.Close()
-  if err != nil {
-    log.Println(err)
-  }
+	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), handler).DisconnectNotify()
+	err := closer.Close()
+	if err != nil {
+		log.Println(err)
+	}
 }
