@@ -1,33 +1,56 @@
 package lsp
 
 import (
-  "fmt"
+	"context"
+	"encoding/json"
+
+	"github.com/sourcegraph/go-lsp"
+	"github.com/sourcegraph/jsonrpc2"
 )
 
-type Header map[string]string
+var root lsp.DocumentURI
 
-func (h Header) Add(key, value string) {
-  h[key] = value
+func Handle() jsonrpc2.Handler {
+	return jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
+		switch req.Method {
+		case "initialize":
+			var params lsp.InitializeParams
+			if err := json.Unmarshal(*req.Params, &params); err != nil {
+				return nil, err
+			}
+
+			root = params.Root()
+
+			return lsp.InitializeResult{}, nil
+
+		case "textDocument/didSave":
+			return nil, sendDiagnostics(ctx, conn, "diagnostics", "go", nil)
+		}
+		return nil, nil
+	})
 }
 
-func (h Header) Get(key string) string {
-  return h[key]
-}
+func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, diags string, source string, files []string) error {
+	params := lsp.PublishDiagnosticsParams{
+		URI:         root + "/main.go",
+		Diagnostics: make([]lsp.Diagnostic, 1),
+	}
+	params.Diagnostics[0] = lsp.Diagnostic{
+		Range: lsp.Range{
+			Start: lsp.Position{
+				Line:      0,
+				Character: 0,
+			},
+			End: lsp.Position{
+				Line: 20,
+			},
+		},
+		Severity: lsp.Info,
+		Message:  "git gud bro",
+	}
+	if err := conn.Notify(ctx, "textDocument/publishDiagnostics", params); err != nil {
+		return err
+	}
 
-func (h Header) Remove(key string) {
-  delete(h, key)
-}
-
-type LSPMessage struct {
-  Header Header
-  Content string
-}
-
-func (m *LSPMessage) Encode() (encoded string) {
-  for key, value := range m.Header {
-    encoded += fmt.Sprintf("%s: %s\r\n", key, value)
-  }
-  encoded += fmt.Sprintf("\r\n%s", m.Content)
-
-  return
+	return nil
 }
