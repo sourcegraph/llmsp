@@ -10,6 +10,8 @@ import (
 
 var root lsp.DocumentURI
 
+// Handle looks at the provided request and calls functions depending on the request method.
+// The response, if any, is sent back over the connection.
 func Handle() jsonrpc2.Handler {
 	return jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
 		switch req.Method {
@@ -23,6 +25,9 @@ func Handle() jsonrpc2.Handler {
 
 			return lsp.InitializeResult{}, nil
 
+		case "initialized":
+			return nil, nil
+
 		case "textDocument/didSave":
 			return nil, sendDiagnostics(ctx, conn, "diagnostics", "go", nil)
 		}
@@ -30,6 +35,7 @@ func Handle() jsonrpc2.Handler {
 	})
 }
 
+// sendDiagnostics sends the provided diagnostics back over the provided connection.
 func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, diags string, source string, files []string) error {
 	params := lsp.PublishDiagnosticsParams{
 		URI:         root + "/main.go",
