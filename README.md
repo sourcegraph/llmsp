@@ -2,7 +2,7 @@
 
 POC to explore using LLMs to provide feedback in text editors using the Language Server Protocol.
 
-This repo specifically interacts with Sourcegraph's endpionts to do two things:
+This repo specifically interacts with Sourcegraph's endpoints to do two things:
 1. Fetch related files in the repository using repo embedding search
 2. Use these files as context for queries to the LLM
 
