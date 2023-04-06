@@ -25,6 +25,14 @@ func (stdrwc) Close() error {
 	return os.Stdout.Close()
 }
 
+type RepoIDResponse struct {
+	Data struct {
+		Repository struct {
+			ID string
+		}
+	}
+}
+
 func main() {
 	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), lsp.Handle()).DisconnectNotify()
 }
