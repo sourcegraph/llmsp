@@ -10,7 +10,7 @@ This logic is lifted from the Cody VS Code extension.
 
 ## How to use it
 
-You'll need a Cody-enabled Sourceraph server URL as well as a Sourcegraph Access Token.
+You'll need a Cody-enabled Sourcegraph server URL as well as a Sourcegraph Access Token.
 
 1. In `lsp/lsp.go`, modify the the `sgAccessToken` and `instanceURL` variables to your specific values.
 2. Run `go install`. This will compile the `llmsp` binary and copy it to your `$GOPATH/bin`. This directory needs to be on your `$PATH`. Alternatively, use `go build` and copy the binary yourself.
