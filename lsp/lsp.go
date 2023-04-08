@@ -30,21 +30,70 @@ func Handle() jsonrpc2.Handler {
 
 			root = params.Root()
 
-			return lsp.InitializeResult{}, nil
+			return lsp.InitializeResult{
+				Capabilities: lsp.ServerCapabilities{
+					CodeActionProvider: true,
+				},
+			}, nil
 
 		case "initialized":
 			return nil, nil
 
-		case "textDocument/didSave":
-			var params lsp.DidSaveTextDocumentParams
+		case "textDocument/codeAction":
+			var params lsp.CodeActionParams
 			if err := json.Unmarshal(*req.Params, &params); err != nil {
 				return nil, err
 			}
 
-			return nil, sendDiagnostics(ctx, conn, "diagnostics", "go", []string{string(params.TextDocument.URI)})
+			filename := strings.TrimPrefix(string(params.TextDocument.URI), "file://")
+
+			commands := []lsp.Command{
+				{
+					Title:     "Provide suggestions",
+					Command:   "suggest",
+					Arguments: []interface{}{filename, params.Range.Start.Line, params.Range.End.Line},
+				},
+				{
+					Title:     "Generate docstring",
+					Command:   "docstring",
+					Arguments: []interface{}{filename, params.Range.Start.Line, params.Range.End.Line},
+				},
+			}
+
+			return commands, nil
+
+		case "workspace/executeCommand":
+			var params lsp.ExecuteCommandParams
+			if err := json.Unmarshal(*req.Params, &params); err != nil {
+				return nil, err
+			}
+
+			switch params.Command {
+			case "suggest":
+				filename := params.Arguments[0].(string)
+				startLine := params.Arguments[1].(float64)
+				endLine := params.Arguments[2].(float64)
+				buf, err := ioutil.ReadFile(filename)
+				if err != nil {
+					return nil, err
+				}
+				snippet := getFileSnippet(string(buf), int(startLine), int(endLine))
+				return nil, sendDiagnostics(ctx, conn, filename, snippet, int(startLine))
+			}
+
+			return nil, nil
 		}
 		return nil, nil
 	})
+}
+
+func getFileSnippet(fileContent string, startLine, endLine int) string {
+	fileLines := strings.Split(fileContent, "\n")
+	numberedSnippet := make([]string, 0, endLine-startLine+1)
+	for i, line := range fileLines[startLine:endLine] {
+		numberedSnippet = append(numberedSnippet, fmt.Sprintf("%d. %s", i, line))
+	}
+	return strings.Join(numberedSnippet, "\n")
 }
 
 func getMessages(fileName string, numberedFile string, embeddingResults *embeddings.EmbeddingsSearchResult) []claude.Message {
@@ -82,29 +131,18 @@ Line {number}: {suggestion}`,
 }
 
 // sendDiagnostics sends the provided diagnostics back over the provided connection.
-func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, diags string, source string, files []string) error {
-	filename := strings.TrimPrefix(string(files[0]), "file://")
-	buf, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return err
-	}
-	numberedLines := []string{}
-	for i, line := range strings.Split(string(buf), "\n") {
-		numberedLines = append(numberedLines, fmt.Sprintf("%d. %s", i, line))
-	}
-	numberedFile := strings.Join(numberedLines, "\n")
-
+func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snippet string, lineOffset int) error {
 	srcURL := os.Getenv("SRC_URL")
 	srcToken := os.Getenv("SRC_TOKEN")
 	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
 	srcCLI := embeddings.NewClient(srcURL, srcToken, nil)
 
-	embeddingResults, err := srcCLI.GetEmbeddings("UmVwb3NpdG9yeTozOTk=", string(buf), 2, 0)
+	embeddingResults, err := srcCLI.GetEmbeddings("UmVwb3NpdG9yeTozOTk=", snippet, 2, 0)
 	if err != nil {
 		return err
 	}
 
-	params := claude.DefaultCompletionParameters(getMessages(filename, numberedFile, embeddingResults))
+	params := claude.DefaultCompletionParameters(getMessages(filename, snippet, embeddingResults))
 
 	retChan, err := claudeCLI.GetCompletion(params)
 
@@ -139,11 +177,11 @@ func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, diags string, 
 			diagnostics = append(diagnostics, lsp.Diagnostic{
 				Range: lsp.Range{
 					Start: lsp.Position{
-						Line:      lineStart,
+						Line:      lineStart + lineOffset,
 						Character: 0,
 					},
 					End: lsp.Position{
-						Line:      lineEnd,
+						Line:      lineEnd + lineOffset,
 						Character: 0,
 					},
 				},
@@ -153,7 +191,7 @@ func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, diags string, 
 		}
 
 		params := lsp.PublishDiagnosticsParams{
-			URI:         lsp.DocumentURI(files[0]),
+			URI:         lsp.DocumentURI("file://" + filename),
 			Diagnostics: diagnostics,
 		}
 		if err := conn.Notify(ctx, "textDocument/publishDiagnostics", params); err != nil {
