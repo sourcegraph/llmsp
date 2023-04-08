@@ -52,7 +52,7 @@ func DefaultCompletionParameters(messages []Message) *CompletionParameters {
 }
 
 func (c *Client) GetCompletion(params *CompletionParameters) (chan string, error) {
-  retChan := make(chan string)
+	retChan := make(chan string)
 	completionsPath, err := url.JoinPath(c.URL, "/.api/completions/stream")
 	if err != nil {
 		return nil, err
@@ -75,34 +75,34 @@ func (c *Client) GetCompletion(params *CompletionParameters) (chan string, error
 		return nil, err
 	}
 
-  go func() {
-    var completion struct {
-      Completion string
-    }
+	go func() {
+		var completion struct {
+			Completion string
+		}
 
-    reader := bufio.NewReader(resp.Body)
-    defer resp.Body.Close()
+		reader := bufio.NewReader(resp.Body)
+		defer resp.Body.Close()
 
-    for {
-      line, err := reader.ReadSlice('\n')
-      if err != nil {
-        close(retChan)
-        break
-      }
+		for {
+			line, err := reader.ReadSlice('\n')
+			if err != nil {
+				close(retChan)
+				break
+			}
 
-      if strings.HasPrefix(string(line), "event") {
-        if strings.Contains(string(line), "done") {
-          close(retChan)
-          break
-        }
-      } else {
-        if strings.HasPrefix(string(line), "data: ") {
-          json.Unmarshal([]byte(strings.TrimPrefix(string(line), "data: ")), &completion)
-          retChan<-"Line" + completion.Completion
-        }
-      }
-    }
-  }()
+			if strings.HasPrefix(string(line), "event") {
+				if strings.Contains(string(line), "done") {
+					close(retChan)
+					break
+				}
+			} else {
+				if strings.HasPrefix(string(line), "data: ") {
+					json.Unmarshal([]byte(strings.TrimPrefix(string(line), "data: ")), &completion)
+					retChan <- params.Messages[len(params.Messages)-1].Text + completion.Completion
+				}
+			}
+		}
+	}()
 
 	return retChan, nil
 }

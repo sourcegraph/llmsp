@@ -17,6 +17,19 @@ import (
 
 var root lsp.DocumentURI
 
+type TextDocumentEdit struct {
+	TextDocument lsp.VersionedTextDocumentIdentifier `json:"textDocument"`
+	Edits        []lsp.TextEdit                      `json:"edits"`
+}
+
+type WorkspaceEdit struct {
+	DocumentChanges []TextDocumentEdit `json:"documentChanges"`
+}
+
+type ApplyWorkspaceEditParams struct {
+	Edit WorkspaceEdit `json:"edit"`
+}
+
 // Handle looks at the provided request and calls functions depending on the request method.
 // The response, if any, is sent back over the connection.
 func Handle() jsonrpc2.Handler {
@@ -30,8 +43,14 @@ func Handle() jsonrpc2.Handler {
 
 			root = params.Root()
 
+			opts := lsp.TextDocumentSyncOptionsOrKind{
+				Options: &lsp.TextDocumentSyncOptions{
+					WillSave: true,
+				},
+			}
 			return lsp.InitializeResult{
 				Capabilities: lsp.ServerCapabilities{
+					TextDocumentSync:   &opts,
 					CodeActionProvider: true,
 				},
 			}, nil
@@ -78,7 +97,60 @@ func Handle() jsonrpc2.Handler {
 					return nil, err
 				}
 				snippet := getFileSnippet(string(buf), int(startLine), int(endLine))
-				return nil, sendDiagnostics(ctx, conn, filename, snippet, int(startLine))
+				snippet = numberLines(snippet, int(startLine))
+				return nil, sendDiagnostics(ctx, conn, filename, snippet)
+
+			case "docstring":
+				filename := params.Arguments[0].(string)
+				startLine := int(params.Arguments[1].(float64))
+				endLine := int(params.Arguments[2].(float64))
+				buf, err := ioutil.ReadFile(filename)
+				if err != nil {
+					return nil, err
+				}
+				funcSnippet := getFileSnippet(string(buf), int(startLine), int(endLine))
+				docstring := getDocString(funcSnippet)
+				// fileLines := strings.Split(string(buf), "\n")
+				// firstPart := fileLines[:startLine]
+				// firstPart = append(firstPart, strings.Split(docstring, "\n")...)
+				// firstPart = append(firstPart, fileLines[startLine:]...)
+				// os.WriteFile(filename, []byte(strings.Join(firstPart, "\n")), 1)
+
+				edits := []lsp.TextEdit{
+					{
+						Range: lsp.Range{
+							Start: lsp.Position{
+								Line:      startLine,
+								Character: 0,
+							},
+							End: lsp.Position{
+								Line:      endLine,
+								Character: 0,
+							},
+						},
+						NewText: docstring + "\n" + funcSnippet,
+					},
+				}
+
+				editParams := ApplyWorkspaceEditParams{
+					Edit: WorkspaceEdit{
+						DocumentChanges: []TextDocumentEdit{
+							{
+								TextDocument: lsp.VersionedTextDocumentIdentifier{
+									TextDocumentIdentifier: lsp.TextDocumentIdentifier{
+										URI: lsp.DocumentURI("file://" + filename),
+									},
+									Version: 0,
+								},
+								Edits: edits,
+							},
+						},
+					},
+				}
+
+				conn.Notify(ctx, "workspace/applyEdit", editParams)
+
+				return nil, nil
 			}
 
 			return nil, nil
@@ -87,16 +159,63 @@ func Handle() jsonrpc2.Handler {
 	})
 }
 
-func getFileSnippet(fileContent string, startLine, endLine int) string {
-	fileLines := strings.Split(fileContent, "\n")
-	numberedSnippet := make([]string, 0, endLine-startLine+1)
-	for i, line := range fileLines[startLine:endLine] {
-		numberedSnippet = append(numberedSnippet, fmt.Sprintf("%d. %s", i, line))
+func getDocString(function string) string {
+	srcURL := os.Getenv("SRC_URL")
+	srcToken := os.Getenv("SRC_TOKEN")
+	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
+	params := claude.DefaultCompletionParameters(getMessages(nil))
+	params.Messages = append(params.Messages, claude.Message{
+		Speaker: "human",
+		Text: fmt.Sprintf(`Generate a doc string explaining the use of the following Go function:
+%s
+
+Don't include the function in your output.`, function),
+	},
+		claude.Message{
+			Speaker: "assistant",
+			Text:    "//",
+		})
+	retChan, err := claudeCLI.GetCompletion(params)
+	if err != nil {
+		return ""
 	}
-	return strings.Join(numberedSnippet, "\n")
+	var docstring string
+	for resp := range retChan {
+		docstring = resp
+	}
+	return docstring
 }
 
-func getMessages(fileName string, numberedFile string, embeddingResults *embeddings.EmbeddingsSearchResult) []claude.Message {
+func getFileSnippet(fileContent string, startLine, endLine int) string {
+	fileLines := strings.Split(fileContent, "\n")
+	return strings.Join(fileLines[startLine:endLine], "\n")
+}
+
+func numberLines(content string, startLine int) string {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = fmt.Sprintf("%d. %s", i+startLine, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func getSuggestionMessages(filename, content string) []claude.Message {
+	return []claude.Message{
+		{
+			Speaker: "human",
+			Text: fmt.Sprintf(`Suggest improvements to following lines of code in the file '%s':
+%s
+
+Suggest improvements in the format:
+Line {number}: {suggestion}`, filename, content),
+		}, {
+			Speaker: "assistant",
+			Text:    "Line",
+		},
+	}
+}
+
+func getMessages(embeddingResults *embeddings.EmbeddingsSearchResult) []claude.Message {
 	messages := []claude.Message{{
 		Speaker: "assistant",
 		Text: `I am Cody, an AI-powered coding assistant developed by Sourcegraph. I operate inside a Language Server Protocol implementation. My task is to help programmers with programming tasks in the Go programming language.
@@ -104,34 +223,24 @@ I am an expert in the Go programming language.
 I ignore import statements.
 I have access to your currently open files in the editor.
 I will generate suggestions as concisely and clearly as possible.
-I only suggest something if I am certain about my answer.
-I suggest improvements in the following format:
-Line {number}: {suggestion}`,
+I only suggest something if I am certain about my answer.`,
 	}}
-	for _, embedding := range embeddingResults.CodeResults {
-		messages = append(messages, claude.Message{
-			Speaker:  "human",
-			FileName: embedding.FileName,
-			Text: fmt.Sprintf(`Here are the contents of the file '%s':
+	if embeddingResults != nil {
+		for _, embedding := range embeddingResults.CodeResults {
+			messages = append(messages, claude.Message{
+				Speaker:  "human",
+				FileName: embedding.FileName,
+				Text: fmt.Sprintf(`Here are the contents of the file '%s':
 %s`, embedding.FileName, embedding.Content),
-		}, claude.Message{Speaker: "assistant", Text: "Ok."})
+			}, claude.Message{Speaker: "assistant", Text: "Ok."})
+		}
 	}
-	messages = append(messages, claude.Message{
-		Speaker: "human",
-		Text: fmt.Sprintf(`Suggest improvements to the file '%s'. Here are the file contents:
-
-%s`, fileName, numberedFile),
-	},
-		claude.Message{
-			Speaker: "assistant",
-			Text:    "Line",
-		})
 
 	return messages
 }
 
 // sendDiagnostics sends the provided diagnostics back over the provided connection.
-func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snippet string, lineOffset int) error {
+func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snippet string) error {
 	srcURL := os.Getenv("SRC_URL")
 	srcToken := os.Getenv("SRC_TOKEN")
 	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
@@ -142,12 +251,12 @@ func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snip
 		return err
 	}
 
-	params := claude.DefaultCompletionParameters(getMessages(filename, snippet, embeddingResults))
+	params := claude.DefaultCompletionParameters(getMessages(embeddingResults))
+	params.Messages = append(params.Messages, getSuggestionMessages(filename, snippet)...)
 
 	retChan, err := claudeCLI.GetCompletion(params)
 
 	for completionResp := range retChan {
-		fmt.Println(completionResp)
 		diagnostics := []lsp.Diagnostic{}
 		for _, line := range strings.Split(completionResp, "\n") {
 			parts := strings.Split(line, ": ")
@@ -177,11 +286,11 @@ func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snip
 			diagnostics = append(diagnostics, lsp.Diagnostic{
 				Range: lsp.Range{
 					Start: lsp.Position{
-						Line:      lineStart + lineOffset,
+						Line:      lineStart,
 						Character: 0,
 					},
 					End: lsp.Position{
-						Line:      lineEnd + lineOffset,
+						Line:      lineEnd,
 						Character: 0,
 					},
 				},
