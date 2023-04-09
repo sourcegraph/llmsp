@@ -77,6 +77,11 @@ func Handle() jsonrpc2.Handler {
 					Command:   "docstring",
 					Arguments: []interface{}{filename, params.Range.Start.Line, params.Range.End.Line},
 				},
+				{
+					Title:     "Implement TODOs",
+					Command:   "todos",
+					Arguments: []interface{}{filename, params.Range.Start.Line, params.Range.End.Line},
+				},
 			}
 
 			return commands, nil
@@ -110,11 +115,6 @@ func Handle() jsonrpc2.Handler {
 				}
 				funcSnippet := getFileSnippet(string(buf), int(startLine), int(endLine))
 				docstring := getDocString(funcSnippet)
-				// fileLines := strings.Split(string(buf), "\n")
-				// firstPart := fileLines[:startLine]
-				// firstPart = append(firstPart, strings.Split(docstring, "\n")...)
-				// firstPart = append(firstPart, fileLines[startLine:]...)
-				// os.WriteFile(filename, []byte(strings.Join(firstPart, "\n")), 1)
 
 				edits := []lsp.TextEdit{
 					{
@@ -125,10 +125,57 @@ func Handle() jsonrpc2.Handler {
 							},
 							End: lsp.Position{
 								Line:      endLine,
-								Character: 0,
+								Character: len(strings.Split(string(buf), "\n")[endLine]),
 							},
 						},
 						NewText: docstring + "\n" + funcSnippet,
+					},
+				}
+
+				editParams := ApplyWorkspaceEditParams{
+					Edit: WorkspaceEdit{
+						DocumentChanges: []TextDocumentEdit{
+							{
+								TextDocument: lsp.VersionedTextDocumentIdentifier{
+									TextDocumentIdentifier: lsp.TextDocumentIdentifier{
+										URI: lsp.DocumentURI("file://" + filename),
+									},
+									Version: 0,
+								},
+								Edits: edits,
+							},
+						},
+					},
+				}
+
+				conn.Notify(ctx, "workspace/applyEdit", editParams)
+
+				return nil, nil
+
+			case "todos":
+				filename := params.Arguments[0].(string)
+				startLine := int(params.Arguments[1].(float64))
+				endLine := int(params.Arguments[2].(float64))
+				buf, err := ioutil.ReadFile(filename)
+				if err != nil {
+					return nil, err
+				}
+				funcSnippet := getFileSnippet(string(buf), int(startLine), int(endLine))
+				implemented := implementTODOs(funcSnippet)
+
+				edits := []lsp.TextEdit{
+					{
+						Range: lsp.Range{
+							Start: lsp.Position{
+								Line:      startLine,
+								Character: 0,
+							},
+							End: lsp.Position{
+								Line:      endLine,
+								Character: len(strings.Split(string(buf), "\n")[endLine]),
+							},
+						},
+						NewText: "\n" + implemented,
 					},
 				}
 
@@ -186,9 +233,35 @@ Don't include the function in your output.`, function),
 	return docstring
 }
 
+func implementTODOs(function string) string {
+	srcURL := os.Getenv("SRC_URL")
+	srcToken := os.Getenv("SRC_TOKEN")
+	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
+	params := claude.DefaultCompletionParameters(getMessages(nil))
+	params.Messages = append(params.Messages, claude.Message{
+		Speaker: "human",
+		Text: fmt.Sprintf(`The following Go code contains TODO instructions. Replace the TODO comments by implementing them. Import any Go libraries that would help complete the task. Only provide the completed code. Don't say anything else.
+Keep the original code I provided as part of your answer.
+%s`, function),
+	},
+		claude.Message{
+			Speaker: "assistant",
+			Text:    "```go",
+		})
+	retChan, err := claudeCLI.GetCompletion(params)
+	if err != nil {
+		return ""
+	}
+	var implemented string
+	for resp := range retChan {
+		implemented = resp
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(implemented, "```go\n"), "\n```")
+}
+
 func getFileSnippet(fileContent string, startLine, endLine int) string {
 	fileLines := strings.Split(fileContent, "\n")
-	return strings.Join(fileLines[startLine:endLine], "\n")
+	return strings.Join(fileLines[startLine:endLine+1], "\n")
 }
 
 func numberLines(content string, startLine int) string {
