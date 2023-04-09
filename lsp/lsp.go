@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
@@ -30,6 +29,8 @@ type ApplyWorkspaceEditParams struct {
 	Edit WorkspaceEdit `json:"edit"`
 }
 
+var fileMap = map[lsp.DocumentURI]string{}
+
 // Handle looks at the provided request and calls functions depending on the request method.
 // The response, if any, is sent back over the connection.
 func Handle() jsonrpc2.Handler {
@@ -45,7 +46,9 @@ func Handle() jsonrpc2.Handler {
 
 			opts := lsp.TextDocumentSyncOptionsOrKind{
 				Options: &lsp.TextDocumentSyncOptions{
-					WillSave: true,
+					OpenClose: true,
+					WillSave:  true,
+					Change:    lsp.TDSKFull,
 				},
 			}
 			completionOptions := lsp.CompletionOptions{}
@@ -60,29 +63,37 @@ func Handle() jsonrpc2.Handler {
 		case "initialized":
 			return nil, nil
 
+		case "textDocument/didChange":
+			var params lsp.DidChangeTextDocumentParams
+			if err := json.Unmarshal(*req.Params, &params); err != nil {
+				return nil, err
+			}
+
+			fileMap[params.TextDocument.URI] = params.ContentChanges[0].Text
+
+			return nil, nil
+
 		case "textDocument/codeAction":
 			var params lsp.CodeActionParams
 			if err := json.Unmarshal(*req.Params, &params); err != nil {
 				return nil, err
 			}
 
-			filename := strings.TrimPrefix(string(params.TextDocument.URI), "file://")
-
 			commands := []lsp.Command{
 				{
 					Title:     "Provide suggestions",
 					Command:   "suggest",
-					Arguments: []interface{}{filename, params.Range.Start.Line, params.Range.End.Line},
+					Arguments: []interface{}{params.TextDocument.URI, params.Range.Start.Line, params.Range.End.Line},
 				},
 				{
 					Title:     "Generate docstring",
 					Command:   "docstring",
-					Arguments: []interface{}{filename, params.Range.Start.Line, params.Range.End.Line},
+					Arguments: []interface{}{params.TextDocument.URI, params.Range.Start.Line, params.Range.End.Line},
 				},
 				{
 					Title:     "Implement TODOs",
 					Command:   "todos",
-					Arguments: []interface{}{filename, params.Range.Start.Line, params.Range.End.Line},
+					Arguments: []interface{}{params.TextDocument.URI, params.Range.Start.Line, params.Range.End.Line},
 				},
 			}
 
@@ -93,11 +104,7 @@ func Handle() jsonrpc2.Handler {
 			if err := json.Unmarshal(*req.Params, &params); err != nil {
 				return nil, err
 			}
-			buf, err := ioutil.ReadFile(strings.TrimPrefix(string(params.TextDocument.URI), "file://"))
-			if err != nil {
-				return nil, err
-			}
-			snippet := getFileSnippet(string(buf), 0, params.Position.Line)
+			snippet := getFileSnippet(fileMap[params.TextDocument.URI], 0, params.Position.Line)
 
 			completion := getCompletionSuggestion(snippet)
 
@@ -117,26 +124,18 @@ func Handle() jsonrpc2.Handler {
 
 			switch params.Command {
 			case "suggest":
-				filename := params.Arguments[0].(string)
+				filename := lsp.DocumentURI(params.Arguments[0].(string))
 				startLine := params.Arguments[1].(float64)
 				endLine := params.Arguments[2].(float64)
-				buf, err := ioutil.ReadFile(filename)
-				if err != nil {
-					return nil, err
-				}
-				snippet := getFileSnippet(string(buf), int(startLine), int(endLine))
+				snippet := getFileSnippet(fileMap[filename], int(startLine), int(endLine))
 				snippet = numberLines(snippet, int(startLine))
-				return nil, sendDiagnostics(ctx, conn, filename, snippet)
+				return nil, sendDiagnostics(ctx, conn, string(filename), snippet)
 
 			case "docstring":
-				filename := params.Arguments[0].(string)
+				filename := lsp.DocumentURI(params.Arguments[0].(string))
 				startLine := int(params.Arguments[1].(float64))
 				endLine := int(params.Arguments[2].(float64))
-				buf, err := ioutil.ReadFile(filename)
-				if err != nil {
-					return nil, err
-				}
-				funcSnippet := getFileSnippet(string(buf), int(startLine), int(endLine))
+				funcSnippet := getFileSnippet(fileMap[filename], int(startLine), int(endLine))
 				docstring := getDocString(funcSnippet)
 
 				edits := []lsp.TextEdit{
@@ -148,7 +147,7 @@ func Handle() jsonrpc2.Handler {
 							},
 							End: lsp.Position{
 								Line:      endLine,
-								Character: len(strings.Split(string(buf), "\n")[endLine]),
+								Character: len(strings.Split(fileMap[filename], "\n")[endLine]),
 							},
 						},
 						NewText: docstring + "\n" + funcSnippet,
@@ -161,7 +160,7 @@ func Handle() jsonrpc2.Handler {
 							{
 								TextDocument: lsp.VersionedTextDocumentIdentifier{
 									TextDocumentIdentifier: lsp.TextDocumentIdentifier{
-										URI: lsp.DocumentURI("file://" + filename),
+										URI: filename,
 									},
 									Version: 0,
 								},
@@ -176,14 +175,10 @@ func Handle() jsonrpc2.Handler {
 				return nil, nil
 
 			case "todos":
-				filename := params.Arguments[0].(string)
+				filename := lsp.DocumentURI(params.Arguments[0].(string))
 				startLine := int(params.Arguments[1].(float64))
 				endLine := int(params.Arguments[2].(float64))
-				buf, err := ioutil.ReadFile(filename)
-				if err != nil {
-					return nil, err
-				}
-				funcSnippet := getFileSnippet(string(buf), int(startLine), int(endLine))
+				funcSnippet := getFileSnippet(fileMap[filename], int(startLine), int(endLine))
 				implemented := implementTODOs(funcSnippet)
 
 				edits := []lsp.TextEdit{
@@ -195,7 +190,7 @@ func Handle() jsonrpc2.Handler {
 							},
 							End: lsp.Position{
 								Line:      endLine,
-								Character: len(strings.Split(string(buf), "\n")[endLine]),
+								Character: len(strings.Split(fileMap[filename], "\n")[endLine]),
 							},
 						},
 						NewText: "\n" + implemented,
@@ -208,7 +203,7 @@ func Handle() jsonrpc2.Handler {
 							{
 								TextDocument: lsp.VersionedTextDocumentIdentifier{
 									TextDocumentIdentifier: lsp.TextDocumentIdentifier{
-										URI: lsp.DocumentURI("file://" + filename),
+										URI: filename,
 									},
 									Version: 0,
 								},
@@ -373,7 +368,7 @@ func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snip
 	}
 
 	params := claude.DefaultCompletionParameters(getMessages(embeddingResults))
-	params.Messages = append(params.Messages, getSuggestionMessages(filename, snippet)...)
+	params.Messages = append(params.Messages, getSuggestionMessages(strings.TrimPrefix(filename, "file://"), snippet)...)
 
 	retChan, err := claudeCLI.GetCompletion(params, true)
 
@@ -421,7 +416,7 @@ func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snip
 		}
 
 		params := lsp.PublishDiagnosticsParams{
-			URI:         lsp.DocumentURI("file://" + filename),
+			URI:         lsp.DocumentURI(filename),
 			Diagnostics: diagnostics,
 		}
 		if err := conn.Notify(ctx, "textDocument/publishDiagnostics", params); err != nil {
