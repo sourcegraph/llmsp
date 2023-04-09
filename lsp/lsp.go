@@ -64,12 +64,26 @@ func Handle() jsonrpc2.Handler {
 			return nil, nil
 
 		case "textDocument/didChange":
-			var params lsp.DidChangeTextDocumentParams
-			if err := json.Unmarshal(*req.Params, &params); err != nil {
-				return nil, err
-			}
+			go func() {
+				var params lsp.DidChangeTextDocumentParams
+				if err := json.Unmarshal(*req.Params, &params); err != nil {
+					return
+				}
 
-			fileMap[params.TextDocument.URI] = params.ContentChanges[0].Text
+				fileMap[params.TextDocument.URI] = params.ContentChanges[0].Text
+			}()
+
+			return nil, nil
+
+		case "textDocument/didOpen":
+			go func() {
+				var params lsp.DidOpenTextDocumentParams
+				if err := json.Unmarshal(*req.Params, &params); err != nil {
+					return
+				}
+
+				fileMap[params.TextDocument.URI] = params.TextDocument.Text
+			}()
 
 			return nil, nil
 
@@ -110,7 +124,10 @@ func Handle() jsonrpc2.Handler {
 
 			completions := []lsp.CompletionItem{
 				{
-					Label: completion,
+					Label:      "LLMSP",
+					Kind:       lsp.CIKSnippet,
+					InsertText: completion,
+					Detail:     strings.Split(snippet, "\n")[params.Position.Line] + completion,
 				},
 			}
 
@@ -175,45 +192,47 @@ func Handle() jsonrpc2.Handler {
 				return nil, nil
 
 			case "todos":
-				filename := lsp.DocumentURI(params.Arguments[0].(string))
-				startLine := int(params.Arguments[1].(float64))
-				endLine := int(params.Arguments[2].(float64))
-				funcSnippet := getFileSnippet(fileMap[filename], int(startLine), int(endLine))
-				implemented := implementTODOs(funcSnippet)
+				go func() {
+					filename := lsp.DocumentURI(params.Arguments[0].(string))
+					startLine := int(params.Arguments[1].(float64))
+					endLine := int(params.Arguments[2].(float64))
+					funcSnippet := getFileSnippet(fileMap[filename], int(startLine), int(endLine))
+					implemented := implementTODOs(funcSnippet)
 
-				edits := []lsp.TextEdit{
-					{
-						Range: lsp.Range{
-							Start: lsp.Position{
-								Line:      startLine,
-								Character: 0,
-							},
-							End: lsp.Position{
-								Line:      endLine,
-								Character: len(strings.Split(fileMap[filename], "\n")[endLine]),
-							},
-						},
-						NewText: "\n" + implemented,
-					},
-				}
-
-				editParams := ApplyWorkspaceEditParams{
-					Edit: WorkspaceEdit{
-						DocumentChanges: []TextDocumentEdit{
-							{
-								TextDocument: lsp.VersionedTextDocumentIdentifier{
-									TextDocumentIdentifier: lsp.TextDocumentIdentifier{
-										URI: filename,
-									},
-									Version: 0,
+					edits := []lsp.TextEdit{
+						{
+							Range: lsp.Range{
+								Start: lsp.Position{
+									Line:      startLine,
+									Character: 0,
 								},
-								Edits: edits,
+								End: lsp.Position{
+									Line:      endLine,
+									Character: len(strings.Split(fileMap[filename], "\n")[endLine]),
+								},
+							},
+							NewText: "\n" + implemented,
+						},
+					}
+
+					editParams := ApplyWorkspaceEditParams{
+						Edit: WorkspaceEdit{
+							DocumentChanges: []TextDocumentEdit{
+								{
+									TextDocument: lsp.VersionedTextDocumentIdentifier{
+										TextDocumentIdentifier: lsp.TextDocumentIdentifier{
+											URI: filename,
+										},
+										Version: 0,
+									},
+									Edits: edits,
+								},
 							},
 						},
-					},
-				}
+					}
 
-				conn.Notify(ctx, "workspace/applyEdit", editParams)
+					conn.Notify(ctx, "workspace/applyEdit", editParams)
+				}()
 
 				return nil, nil
 			}
@@ -231,12 +250,12 @@ func getCompletionSuggestion(snippet string) string {
 	params := claude.DefaultCompletionParameters(getMessages(nil))
 	params.Messages = append(params.Messages, claude.Message{
 		Speaker: "human",
-		Text: fmt.Sprintf(`Suggest a code snippet to complete the following Go code:
+		Text: fmt.Sprintf(`Suggest a code snippet to complete the following Go code. Provide only the suggestion, nothing else.
 %s`, snippet),
 	},
 		claude.Message{
 			Speaker: "assistant",
-			Text:    strings.Split(snippet, "\n")[len(strings.Split(snippet, "\n"))-1],
+			Text:    "```go\n" + strings.Split(snippet, "\n")[len(strings.Split(snippet, "\n"))-1],
 		})
 	retChan, err := claudeCLI.GetCompletion(params, false)
 	if err != nil {
@@ -246,7 +265,7 @@ func getCompletionSuggestion(snippet string) string {
 	for resp := range retChan {
 		completion = resp
 	}
-	return completion
+	return strings.TrimSuffix(strings.TrimPrefix(completion, "```go\n"), "\n```")
 }
 
 func getDocString(function string) string {

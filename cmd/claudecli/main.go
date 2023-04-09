@@ -35,7 +35,7 @@ func printWords(words []string) {`,
 
 	params := claude.DefaultCompletionParameters(messages)
 
-	completion, err := cli.GetCompletion(params)
+	completion, err := cli.GetCompletion(params, false)
 	if err != nil {
 		fmt.Println(err)
 		return
