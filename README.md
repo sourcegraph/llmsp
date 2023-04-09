@@ -42,6 +42,8 @@ lspconfig.llmsp.setup {}
 
 For other editors you are on your own :)
 
+It's also recommended to have a way to trigger code actions while in `VISUAL` mode, as the text selection is used for some code actions.
+
 ## Play around with it
 
 Try to add your own code actions. Use the existing ones to see how to send edits back to the editor, play around with the prompts, etc.
