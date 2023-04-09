@@ -22,24 +22,14 @@ I only suggest something if I am certain about my answer.`,
 		},
 		{
 			Speaker: "human",
-			Text: `The following Go code contains TODO instructions. Replace the TODO comments by implementing them. Import any Go libraries that would help complete this task. Only provide the completed code. Don't say anything else.
-import "fmt"
-
-func addNumbers(num1, num2 int) int {
-  if isPrime(num1) {
-    fmt.Println(num1)
-  }
-  return num1 + num2
-}
-
-func isPrime(n int) bool {
-  // Check if n is a prime number.
-}
+			Text: `Suggest a code snippet to complete the following code:
+func printWords(words []string) {
 `,
 		},
 		{
 			Speaker: "assistant",
-			Text:    "```go",
+			Text: "```go" + `
+func printWords(words []string) {`,
 		},
 	}
 

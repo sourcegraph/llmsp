@@ -51,7 +51,7 @@ func DefaultCompletionParameters(messages []Message) *CompletionParameters {
 	}
 }
 
-func (c *Client) GetCompletion(params *CompletionParameters) (chan string, error) {
+func (c *Client) GetCompletion(params *CompletionParameters, includePromptText bool) (chan string, error) {
 	retChan := make(chan string)
 	completionsPath, err := url.JoinPath(c.URL, "/.api/completions/stream")
 	if err != nil {
@@ -98,7 +98,11 @@ func (c *Client) GetCompletion(params *CompletionParameters) (chan string, error
 			} else {
 				if strings.HasPrefix(string(line), "data: ") {
 					json.Unmarshal([]byte(strings.TrimPrefix(string(line), "data: ")), &completion)
-					retChan <- params.Messages[len(params.Messages)-1].Text + completion.Completion
+          if includePromptText {
+            retChan <- params.Messages[len(params.Messages)-1].Text + completion.Completion
+          } else {
+            retChan <- completion.Completion
+          }
 				}
 			}
 		}

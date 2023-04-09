@@ -48,10 +48,12 @@ func Handle() jsonrpc2.Handler {
 					WillSave: true,
 				},
 			}
+			completionOptions := lsp.CompletionOptions{}
 			return lsp.InitializeResult{
 				Capabilities: lsp.ServerCapabilities{
 					TextDocumentSync:   &opts,
 					CodeActionProvider: true,
+					CompletionProvider: &completionOptions,
 				},
 			}, nil
 
@@ -85,6 +87,27 @@ func Handle() jsonrpc2.Handler {
 			}
 
 			return commands, nil
+
+		case "textDocument/completion":
+			var params lsp.CompletionParams
+			if err := json.Unmarshal(*req.Params, &params); err != nil {
+				return nil, err
+			}
+			buf, err := ioutil.ReadFile(strings.TrimPrefix(string(params.TextDocument.URI), "file://"))
+			if err != nil {
+				return nil, err
+			}
+			snippet := getFileSnippet(string(buf), 0, params.Position.Line)
+
+			completion := getCompletionSuggestion(snippet)
+
+			completions := []lsp.CompletionItem{
+				{
+					Label: completion,
+				},
+			}
+
+			return completions, nil
 
 		case "workspace/executeCommand":
 			var params lsp.ExecuteCommandParams
@@ -206,6 +229,31 @@ func Handle() jsonrpc2.Handler {
 	})
 }
 
+func getCompletionSuggestion(snippet string) string {
+	srcURL := os.Getenv("SRC_URL")
+	srcToken := os.Getenv("SRC_TOKEN")
+	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
+	params := claude.DefaultCompletionParameters(getMessages(nil))
+	params.Messages = append(params.Messages, claude.Message{
+		Speaker: "human",
+		Text: fmt.Sprintf(`Suggest a code snippet to complete the following Go code:
+%s`, snippet),
+	},
+		claude.Message{
+			Speaker: "assistant",
+			Text:    strings.Split(snippet, "\n")[len(strings.Split(snippet, "\n"))-1],
+		})
+	retChan, err := claudeCLI.GetCompletion(params, false)
+	if err != nil {
+		return ""
+	}
+	var completion string
+	for resp := range retChan {
+		completion = resp
+	}
+	return completion
+}
+
 func getDocString(function string) string {
 	srcURL := os.Getenv("SRC_URL")
 	srcToken := os.Getenv("SRC_TOKEN")
@@ -222,7 +270,7 @@ Don't include the function in your output.`, function),
 			Speaker: "assistant",
 			Text:    "//",
 		})
-	retChan, err := claudeCLI.GetCompletion(params)
+	retChan, err := claudeCLI.GetCompletion(params, true)
 	if err != nil {
 		return ""
 	}
@@ -248,7 +296,7 @@ Keep the original code I provided as part of your answer.
 			Speaker: "assistant",
 			Text:    "```go",
 		})
-	retChan, err := claudeCLI.GetCompletion(params)
+	retChan, err := claudeCLI.GetCompletion(params, true)
 	if err != nil {
 		return ""
 	}
@@ -327,7 +375,7 @@ func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snip
 	params := claude.DefaultCompletionParameters(getMessages(embeddingResults))
 	params.Messages = append(params.Messages, getSuggestionMessages(filename, snippet)...)
 
-	retChan, err := claudeCLI.GetCompletion(params)
+	retChan, err := claudeCLI.GetCompletion(params, true)
 
 	for completionResp := range retChan {
 		diagnostics := []lsp.Diagnostic{}
