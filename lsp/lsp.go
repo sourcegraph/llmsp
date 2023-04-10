@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -14,7 +13,11 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
-var root lsp.DocumentURI
+var (
+	root     lsp.DocumentURI
+	srcURL   string
+	srcToken string
+)
 
 type TextDocumentEdit struct {
 	TextDocument lsp.VersionedTextDocumentIdentifier `json:"textDocument"`
@@ -27,6 +30,27 @@ type WorkspaceEdit struct {
 
 type ApplyWorkspaceEditParams struct {
 	Edit WorkspaceEdit `json:"edit"`
+}
+
+type LLMSPSettings struct {
+	Sourcegraph *SourcegraphSettings `json:"sourcegraph"`
+}
+
+type SourcegraphSettings struct {
+	URL         string `json:"url"`
+	AccessToken string `json:"accessToken"`
+}
+
+type LLMSPConfig struct {
+	Settings SourcegraphSettings `json:"sourcegraph"`
+}
+
+type ConfigurationSettings struct {
+	LLMSP LLMSPSettings `json:"llmsp"`
+}
+
+type DidChangeConfigurationParams struct {
+	Settings ConfigurationSettings `json:"settings"`
 }
 
 var fileMap = map[lsp.DocumentURI]string{}
@@ -132,6 +156,17 @@ func Handle() jsonrpc2.Handler {
 			}
 
 			return completions, nil
+
+		case "workspace/didChangeConfiguration":
+			var params DidChangeConfigurationParams
+			if err := json.Unmarshal(*req.Params, &params); err != nil {
+				return nil, err
+			}
+			if params.Settings.LLMSP.Sourcegraph != nil {
+				srcURL = params.Settings.LLMSP.Sourcegraph.URL
+				srcToken = params.Settings.LLMSP.Sourcegraph.AccessToken
+			}
+			return nil, nil
 
 		case "workspace/executeCommand":
 			var params lsp.ExecuteCommandParams
@@ -244,8 +279,6 @@ func Handle() jsonrpc2.Handler {
 }
 
 func getCompletionSuggestion(snippet string) string {
-	srcURL := os.Getenv("SRC_URL")
-	srcToken := os.Getenv("SRC_TOKEN")
 	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
 	params := claude.DefaultCompletionParameters(getMessages(nil))
 	params.Messages = append(params.Messages, claude.Message{
@@ -269,8 +302,6 @@ func getCompletionSuggestion(snippet string) string {
 }
 
 func getDocString(function string) string {
-	srcURL := os.Getenv("SRC_URL")
-	srcToken := os.Getenv("SRC_TOKEN")
 	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
 	params := claude.DefaultCompletionParameters(getMessages(nil))
 	params.Messages = append(params.Messages, claude.Message{
@@ -296,8 +327,6 @@ Don't include the function in your output.`, function),
 }
 
 func implementTODOs(function string) string {
-	srcURL := os.Getenv("SRC_URL")
-	srcToken := os.Getenv("SRC_TOKEN")
 	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
 	params := claude.DefaultCompletionParameters(getMessages(nil))
 	params.Messages = append(params.Messages, claude.Message{
@@ -376,8 +405,6 @@ I only suggest something if I am certain about my answer.`,
 
 // sendDiagnostics sends the provided diagnostics back over the provided connection.
 func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snippet string) error {
-	srcURL := os.Getenv("SRC_URL")
-	srcToken := os.Getenv("SRC_TOKEN")
 	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
 	srcCLI := embeddings.NewClient(srcURL, srcToken, nil)
 
