@@ -40,7 +40,7 @@ lspconfig.llmsp.setup({
   llmsp = {
     sourcegraph = {
       url = SOURCEGRAPH_ENDPOINT,
-      token = SOURCEGRAPH_ACCESSTOKEN,
+      accessToken = SOURCEGRAPH_ACCESSTOKEN,
     },
 })
 ```
