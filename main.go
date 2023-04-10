@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/pjlast/llmsp/lsp"
+	"github.com/pjlast/llmsp/types"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -26,6 +27,8 @@ func (stdrwc) Close() error {
 }
 
 func main() {
-	llmsp := &lsp.Server{}
+	llmsp := &lsp.Server{
+		FileMap: make(types.MemoryFileMap),
+	}
 	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), llmsp.Handle()).DisconnectNotify()
 }

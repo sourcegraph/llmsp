@@ -98,11 +98,11 @@ func (c *Client) GetCompletion(params *CompletionParameters, includePromptText b
 			} else {
 				if strings.HasPrefix(string(line), "data: ") {
 					json.Unmarshal([]byte(strings.TrimPrefix(string(line), "data: ")), &completion)
-          if includePromptText {
-            retChan <- params.Messages[len(params.Messages)-1].Text + completion.Completion
-          } else {
-            retChan <- completion.Completion
-          }
+					if includePromptText {
+						retChan <- params.Messages[len(params.Messages)-1].Text + completion.Completion
+					} else {
+						retChan <- completion.Completion
+					}
 				}
 			}
 		}
