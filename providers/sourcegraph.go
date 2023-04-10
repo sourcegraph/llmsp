@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -19,7 +20,15 @@ type SourcegraphLLM struct {
 	ClaudeClient     *claude.Client
 	URL              string
 	AccessToken      string
-	RepoEmbeddings   []string
+	RepoID           string
+}
+
+func getGitURL() string {
+	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
@@ -29,9 +38,25 @@ func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
 
 	l.URL = settings.Sourcegraph.URL
 	l.AccessToken = settings.Sourcegraph.AccessToken
-	l.RepoEmbeddings = settings.Sourcegraph.RepoEmbeddings
 	l.EmbeddingsClient = embeddings.NewClient(l.URL, l.AccessToken, nil)
 	l.ClaudeClient = claude.NewClient(l.URL, l.AccessToken, nil)
+
+	gitURL := getGitURL()
+	if gitURL != "" {
+		urlAndRepo := strings.Split(strings.Split(gitURL, "@")[1], ":")
+		baseURL := urlAndRepo[0]
+		repoName := baseURL + "/" + strings.TrimSuffix(urlAndRepo[1], ".git")
+
+		for _, rn := range settings.Sourcegraph.RepoEmbeddings {
+			if rn == repoName {
+				repoID, err := l.EmbeddingsClient.GetRepoID(repoName)
+				if err != nil {
+				} else {
+					l.RepoID = repoID
+				}
+			}
+		}
+	}
 
 	return nil
 }
@@ -44,8 +69,8 @@ func (l *SourcegraphLLM) GetCompletions(params lsp.CompletionParams) ([]lsp.Comp
 
 	var embeddings *embeddings.EmbeddingsSearchResult = nil
 	var err error
-	if len(l.RepoEmbeddings) > 0 {
-		embeddings, _ = l.EmbeddingsClient.GetEmbeddings("UmVwb3NpdG9yeTozOTk=", snippet, 8, 0)
+	if l.RepoID != "" {
+		embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, snippet, 8, 0)
 	}
 	claudeParams := claude.DefaultCompletionParameters(getMessages(embeddings))
 	claudeParams.Messages = append(claudeParams.Messages, claude.Message{
@@ -220,7 +245,11 @@ Keep the original code I provided as part of your answer.
 
 // sendDiagnostics sends the provided diagnostics back over the provided connection.
 func (l *SourcegraphLLM) sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snippet string) error {
-	embeddingResults, err := l.EmbeddingsClient.GetEmbeddings("UmVwb3NpdG9yeTozOTk=", snippet, 2, 0)
+	repoID, err := l.EmbeddingsClient.GetRepoID("github.com/sourcegraph/sourcegraph")
+	if err != nil {
+		return err
+	}
+	embeddingResults, err := l.EmbeddingsClient.GetEmbeddings(repoID, snippet, 2, 0)
 	if err != nil {
 		return err
 	}
