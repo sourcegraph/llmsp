@@ -249,9 +249,9 @@ func (l *SourcegraphLLM) sendDiagnostics(ctx context.Context, conn jsonrpc2.JSON
 	if err != nil {
 		return err
 	}
-	embeddingResults, err := l.EmbeddingsClient.GetEmbeddings(repoID, snippet, 2, 0)
-	if err != nil {
-		return err
+	var embeddingResults *embeddings.EmbeddingsSearchResult = nil
+	if l.RepoID != "" {
+		embeddingResults, _ = l.EmbeddingsClient.GetEmbeddings(repoID, snippet, 8, 0)
 	}
 
 	params := claude.DefaultCompletionParameters(getMessages(embeddingResults))
