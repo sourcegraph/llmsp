@@ -18,7 +18,9 @@ Run `go install`. This will compile the `llmsp` binary and copy it to your `$GOP
 
 ### Configure the LSP
 
-In your Neovim LSP configuration, add the following lines (if using lspconfig):
+#### neovim/nvim-lspconfig
+
+In your Neovim LSP config:
 
 ```lua
 local lspconfig = require('lspconfig')
@@ -43,6 +45,31 @@ lspconfig.llmsp.setup({
       accessToken = SOURCEGRAPH_ACCESSTOKEN,
     },
 })
+```
+
+#### neoclide/coc.nvim
+
+In your `coc-settings.json` (open it with `:CocConfig`):
+
+```json
+{
+  "languageserver": {
+    "llmsp": {
+      "command": "llmsp",
+      "rootPatterns": ["go.mod"],
+      "trace.server": "verbose",
+      "filetypes": ["go"],
+      "settings": {
+        "llmsp": {
+          "sourcegraph": {
+            "url": SOURCEGRAPH_ENDPOINT,
+            "accessToken": SOURCEGRAPH_ACCESSTOKEN
+          }
+        }
+      }
+    }
+  }
+}
 ```
 
 For other editors you are on your own :)
