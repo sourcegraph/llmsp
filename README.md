@@ -12,10 +12,9 @@ This logic is lifted from the Cody VS Code extension.
 
 You'll need a Cody-enabled Sourcegraph server URL as well as a Sourcegraph Access Token.
 
-1. Set two environment variables: `SRC_TOKEN` and `SRC_URL`
-  a. `SRC_TOKEN` should be a valid Sourcegraph access token
-  b. `SRC_URL` should be a Cody-enabled Sourcegraph instance
-2. Run `go install`. This will compile the `llmsp` binary and copy it to your `$GOPATH/bin`. This directory needs to be on your `$PATH`. Alternatively, use `go build` and copy the binary yourself.
+```
+Run `go install`. This will compile the `llmsp` binary and copy it to your `$GOPATH/bin`. This directory needs to be on your `$PATH`. Alternatively, use `go build` and copy the binary yourself.
+```
 
 ### Configure the LSP
 
@@ -37,7 +36,13 @@ if not configs.llmsp then
   }
 end
 
-lspconfig.llmsp.setup {}
+lspconfig.llmsp.setup({
+  llmsp = {
+    sourcegraph = {
+      url = SOURCEGRAPH_ENDPOINT,
+      token = SOURCEGRAPH_ACCESSTOKEN,
+    },
+})
 ```
 
 For other editors you are on your own :)
