@@ -13,51 +13,20 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
-var (
-	root     lsp.DocumentURI
-	srcURL   string
-	srcToken string
-)
-
-type TextDocumentEdit struct {
-	TextDocument lsp.VersionedTextDocumentIdentifier `json:"textDocument"`
-	Edits        []lsp.TextEdit                      `json:"edits"`
+type LLMSPSourcegraphSettings struct {
+	EmbeddingsClient *embeddings.Client
+	ClaudeClient     *claude.Client
+	Enabled          bool
+	URL              string
+	AccessToken      string
+	RepoEmbeddings   []string
 }
 
-type WorkspaceEdit struct {
-	DocumentChanges []TextDocumentEdit `json:"documentChanges"`
+type Server struct {
+	Sourcegraph LLMSPSourcegraphSettings
 }
 
-type ApplyWorkspaceEditParams struct {
-	Edit WorkspaceEdit `json:"edit"`
-}
-
-type LLMSPSettings struct {
-	Sourcegraph *SourcegraphSettings `json:"sourcegraph"`
-}
-
-type SourcegraphSettings struct {
-	URL         string `json:"url"`
-	AccessToken string `json:"accessToken"`
-}
-
-type LLMSPConfig struct {
-	Settings SourcegraphSettings `json:"sourcegraph"`
-}
-
-type ConfigurationSettings struct {
-	LLMSP LLMSPSettings `json:"llmsp"`
-}
-
-type DidChangeConfigurationParams struct {
-	Settings ConfigurationSettings `json:"settings"`
-}
-
-var fileMap = map[lsp.DocumentURI]string{}
-
-// Handle looks at the provided request and calls functions depending on the request method.
-// The response, if any, is sent back over the connection.
-func Handle() jsonrpc2.Handler {
+func (s *Server) Handle() jsonrpc2.Handler {
 	return jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
 		switch req.Method {
 		case "initialize":
@@ -76,6 +45,7 @@ func Handle() jsonrpc2.Handler {
 				},
 			}
 			completionOptions := lsp.CompletionOptions{}
+
 			return lsp.InitializeResult{
 				Capabilities: lsp.ServerCapabilities{
 					TextDocumentSync:   &opts,
@@ -88,14 +58,12 @@ func Handle() jsonrpc2.Handler {
 			return nil, nil
 
 		case "textDocument/didChange":
-			go func() {
-				var params lsp.DidChangeTextDocumentParams
-				if err := json.Unmarshal(*req.Params, &params); err != nil {
-					return
-				}
+			var params lsp.DidChangeTextDocumentParams
+			if err := json.Unmarshal(*req.Params, &params); err != nil {
+				return nil, err
+			}
 
-				fileMap[params.TextDocument.URI] = params.ContentChanges[0].Text
-			}()
+			fileMap[params.TextDocument.URI] = params.ContentChanges[0].Text
 
 			return nil, nil
 
@@ -142,9 +110,12 @@ func Handle() jsonrpc2.Handler {
 			if err := json.Unmarshal(*req.Params, &params); err != nil {
 				return nil, err
 			}
+			if params.Context.TriggerKind != lsp.CTKInvoked {
+				return []lsp.CompletionItem{}, nil
+			}
 			snippet := getFileSnippet(fileMap[params.TextDocument.URI], 0, params.Position.Line)
 
-			completion := getCompletionSuggestion(snippet)
+			completion := s.getCompletionSuggestion(snippet)
 
 			completions := []lsp.CompletionItem{
 				{
@@ -163,8 +134,12 @@ func Handle() jsonrpc2.Handler {
 				return nil, err
 			}
 			if params.Settings.LLMSP.Sourcegraph != nil {
-				srcURL = params.Settings.LLMSP.Sourcegraph.URL
-				srcToken = params.Settings.LLMSP.Sourcegraph.AccessToken
+				s.Sourcegraph.Enabled = true
+				s.Sourcegraph.URL = params.Settings.LLMSP.Sourcegraph.URL
+				s.Sourcegraph.AccessToken = params.Settings.LLMSP.Sourcegraph.AccessToken
+				s.Sourcegraph.RepoEmbeddings = params.Settings.LLMSP.Sourcegraph.RepoEmbeddings
+				s.Sourcegraph.EmbeddingsClient = embeddings.NewClient(s.Sourcegraph.URL, s.Sourcegraph.AccessToken, nil)
+				s.Sourcegraph.ClaudeClient = claude.NewClient(s.Sourcegraph.URL, s.Sourcegraph.AccessToken, nil)
 			}
 			return nil, nil
 
@@ -181,14 +156,14 @@ func Handle() jsonrpc2.Handler {
 				endLine := params.Arguments[2].(float64)
 				snippet := getFileSnippet(fileMap[filename], int(startLine), int(endLine))
 				snippet = numberLines(snippet, int(startLine))
-				return nil, sendDiagnostics(ctx, conn, string(filename), snippet)
+				return nil, s.sendDiagnostics(ctx, conn, string(filename), snippet)
 
 			case "docstring":
 				filename := lsp.DocumentURI(params.Arguments[0].(string))
 				startLine := int(params.Arguments[1].(float64))
 				endLine := int(params.Arguments[2].(float64))
 				funcSnippet := getFileSnippet(fileMap[filename], int(startLine), int(endLine))
-				docstring := getDocString(funcSnippet)
+				docstring := s.getDocString(funcSnippet)
 
 				edits := []lsp.TextEdit{
 					{
@@ -232,7 +207,7 @@ func Handle() jsonrpc2.Handler {
 					startLine := int(params.Arguments[1].(float64))
 					endLine := int(params.Arguments[2].(float64))
 					funcSnippet := getFileSnippet(fileMap[filename], int(startLine), int(endLine))
-					implemented := implementTODOs(funcSnippet)
+					implemented := s.implementTODOs(funcSnippet)
 
 					edits := []lsp.TextEdit{
 						{
@@ -278,9 +253,52 @@ func Handle() jsonrpc2.Handler {
 	})
 }
 
-func getCompletionSuggestion(snippet string) string {
-	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
-	params := claude.DefaultCompletionParameters(getMessages(nil))
+var root lsp.DocumentURI
+
+type TextDocumentEdit struct {
+	TextDocument lsp.VersionedTextDocumentIdentifier `json:"textDocument"`
+	Edits        []lsp.TextEdit                      `json:"edits"`
+}
+
+type WorkspaceEdit struct {
+	DocumentChanges []TextDocumentEdit `json:"documentChanges"`
+}
+
+type ApplyWorkspaceEditParams struct {
+	Edit WorkspaceEdit `json:"edit"`
+}
+
+type LLMSPSettings struct {
+	Sourcegraph *SourcegraphSettings `json:"sourcegraph"`
+}
+
+type SourcegraphSettings struct {
+	URL            string   `json:"url"`
+	AccessToken    string   `json:"accessToken"`
+	RepoEmbeddings []string `json:"repos"`
+}
+
+type LLMSPConfig struct {
+	Settings SourcegraphSettings `json:"sourcegraph"`
+}
+
+type ConfigurationSettings struct {
+	LLMSP LLMSPSettings `json:"llmsp"`
+}
+
+type DidChangeConfigurationParams struct {
+	Settings ConfigurationSettings `json:"settings"`
+}
+
+var fileMap = map[lsp.DocumentURI]string{}
+
+func (s *Server) getCompletionSuggestion(snippet string) string {
+	var embeddings *embeddings.EmbeddingsSearchResult = nil
+	var err error
+	if len(s.Sourcegraph.RepoEmbeddings) > 0 {
+		embeddings, _ = s.Sourcegraph.EmbeddingsClient.GetEmbeddings("UmVwb3NpdG9yeTozOTk=", snippet, 8, 0)
+	}
+	params := claude.DefaultCompletionParameters(getMessages(embeddings))
 	params.Messages = append(params.Messages, claude.Message{
 		Speaker: "human",
 		Text: fmt.Sprintf(`Suggest a code snippet to complete the following Go code. Provide only the suggestion, nothing else.
@@ -290,7 +308,7 @@ func getCompletionSuggestion(snippet string) string {
 			Speaker: "assistant",
 			Text:    "```go\n" + strings.Split(snippet, "\n")[len(strings.Split(snippet, "\n"))-1],
 		})
-	retChan, err := claudeCLI.GetCompletion(params, false)
+	retChan, err := s.Sourcegraph.ClaudeClient.GetCompletion(params, false)
 	if err != nil {
 		return ""
 	}
@@ -301,8 +319,7 @@ func getCompletionSuggestion(snippet string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(completion, "```go\n"), "\n```")
 }
 
-func getDocString(function string) string {
-	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
+func (s *Server) getDocString(function string) string {
 	params := claude.DefaultCompletionParameters(getMessages(nil))
 	params.Messages = append(params.Messages, claude.Message{
 		Speaker: "human",
@@ -315,7 +332,7 @@ Don't include the function in your output.`, function),
 			Speaker: "assistant",
 			Text:    "//",
 		})
-	retChan, err := claudeCLI.GetCompletion(params, true)
+	retChan, err := s.Sourcegraph.ClaudeClient.GetCompletion(params, true)
 	if err != nil {
 		return ""
 	}
@@ -326,8 +343,7 @@ Don't include the function in your output.`, function),
 	return docstring
 }
 
-func implementTODOs(function string) string {
-	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
+func (s *Server) implementTODOs(function string) string {
 	params := claude.DefaultCompletionParameters(getMessages(nil))
 	params.Messages = append(params.Messages, claude.Message{
 		Speaker: "human",
@@ -339,7 +355,7 @@ Keep the original code I provided as part of your answer.
 			Speaker: "assistant",
 			Text:    "```go",
 		})
-	retChan, err := claudeCLI.GetCompletion(params, true)
+	retChan, err := s.Sourcegraph.ClaudeClient.GetCompletion(params, true)
 	if err != nil {
 		return ""
 	}
@@ -404,11 +420,8 @@ I only suggest something if I am certain about my answer.`,
 }
 
 // sendDiagnostics sends the provided diagnostics back over the provided connection.
-func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snippet string) error {
-	claudeCLI := claude.NewClient(srcURL, srcToken, nil)
-	srcCLI := embeddings.NewClient(srcURL, srcToken, nil)
-
-	embeddingResults, err := srcCLI.GetEmbeddings("UmVwb3NpdG9yeTozOTk=", snippet, 2, 0)
+func (s *Server) sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snippet string) error {
+	embeddingResults, err := s.Sourcegraph.EmbeddingsClient.GetEmbeddings("UmVwb3NpdG9yeTozOTk=", snippet, 2, 0)
 	if err != nil {
 		return err
 	}
@@ -416,7 +429,7 @@ func sendDiagnostics(ctx context.Context, conn jsonrpc2.JSONRPC2, filename, snip
 	params := claude.DefaultCompletionParameters(getMessages(embeddingResults))
 	params.Messages = append(params.Messages, getSuggestionMessages(strings.TrimPrefix(filename, "file://"), snippet)...)
 
-	retChan, err := claudeCLI.GetCompletion(params, true)
+	retChan, err := s.Sourcegraph.ClaudeClient.GetCompletion(params, true)
 
 	for completionResp := range retChan {
 		diagnostics := []lsp.Diagnostic{}

@@ -26,5 +26,6 @@ func (stdrwc) Close() error {
 }
 
 func main() {
-	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), lsp.Handle()).DisconnectNotify()
+	llmsp := &lsp.Server{}
+	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), llmsp.Handle()).DisconnectNotify()
 }
