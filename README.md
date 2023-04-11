@@ -18,6 +18,23 @@ Run `go install`. This will compile the `llmsp` binary and copy it to your `$GOP
 
 ### Configure the LSP
 
+Important bits:
+
+Whatever you use to configure your LSP, it needs to provide a configuration in the form of:
+
+```json
+{
+  "llmsp": {
+    "sourcegraph": {
+      "url": "SOURCEGRAPH_URL",
+      "accessToken": "SOURCEGRAPH_ACCESS_TOKEN"
+    }
+  }
+}
+```
+
+See below example configurations for examples.
+
 #### neovim/nvim-lspconfig
 
 In your Neovim LSP config:
@@ -39,11 +56,14 @@ if not configs.llmsp then
 end
 
 lspconfig.llmsp.setup({
-  llmsp = {
-    sourcegraph = {
-      url = SOURCEGRAPH_ENDPOINT,
-      accessToken = SOURCEGRAPH_ACCESSTOKEN,
-    },
+  settings = {
+    llmsp = {
+      sourcegraph = {
+        url = SOURCEGRAPH_ENDPOINT,
+        accessToken = SOURCEGRAPH_ACCESSTOKEN
+      }
+    }
+  }
 })
 ```
 

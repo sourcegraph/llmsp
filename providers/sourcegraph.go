@@ -346,7 +346,12 @@ func (l *SourcegraphLLM) implementTODOs(filecontents, function string) string {
 
 func (l *SourcegraphLLM) answerQuestions(filecontents, question string) string {
 	question = strings.TrimPrefix(strings.TrimSpace(question), "// ASK: ")
-	params := claude.DefaultCompletionParameters(getMessages(nil))
+	var embeddings *embeddings.EmbeddingsSearchResult = nil
+	var err error
+	if l.RepoID != "" {
+		embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, question, 4, 4)
+	}
+	params := claude.DefaultCompletionParameters(getMessages(embeddings))
 	params.Messages = append(params.Messages,
 		claude.Message{
 			Speaker: "human",
