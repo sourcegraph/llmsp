@@ -165,6 +165,13 @@ func (l *SourcegraphLLM) GetCodeActions(doc lsp.DocumentURI, selection lsp.Range
 			Arguments: []interface{}{doc, selection.Start.Line, selection.End.Line},
 		})
 	}
+	if strings.Contains(strings.Join(strings.Split(l.FileMap[doc], "\n")[selection.Start.Line:selection.End.Line+1], "\n"), "// ASK") {
+		commands = append(commands, lsp.Command{
+			Title:     "Answer question",
+			Command:   "answer",
+			Arguments: []interface{}{doc, selection.Start.Line, selection.End.Line},
+		})
+	}
 	return commands
 }
 
@@ -221,47 +228,86 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		return nil
 
 	case "todos":
-		go func() {
-			filename := lsp.DocumentURI(cmd.Arguments[0].(string))
-			startLine := int(cmd.Arguments[1].(float64))
-			endLine := int(cmd.Arguments[2].(float64))
-			funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
-			implemented := l.implementTODOs(l.FileMap[filename], funcSnippet)
+		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
+		startLine := int(cmd.Arguments[1].(float64))
+		endLine := int(cmd.Arguments[2].(float64))
+		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
+		implemented := l.implementTODOs(l.FileMap[filename], funcSnippet)
 
-			edits := []lsp.TextEdit{
-				{
-					Range: lsp.Range{
-						Start: lsp.Position{
-							Line:      startLine,
-							Character: 0,
-						},
-						End: lsp.Position{
-							Line:      endLine,
-							Character: len(strings.Split(l.FileMap[filename], "\n")[endLine]),
-						},
+		edits := []lsp.TextEdit{
+			{
+				Range: lsp.Range{
+					Start: lsp.Position{
+						Line:      startLine,
+						Character: 0,
 					},
-					NewText: "\n" + implemented,
+					End: lsp.Position{
+						Line:      endLine,
+						Character: len(strings.Split(l.FileMap[filename], "\n")[endLine]),
+					},
 				},
-			}
+				NewText: "\n" + implemented,
+			},
+		}
 
-			editParams := types.ApplyWorkspaceEditParams{
-				Edit: types.WorkspaceEdit{
-					DocumentChanges: []types.TextDocumentEdit{
-						{
-							TextDocument: lsp.VersionedTextDocumentIdentifier{
-								TextDocumentIdentifier: lsp.TextDocumentIdentifier{
-									URI: filename,
-								},
-								Version: 0,
+		editParams := types.ApplyWorkspaceEditParams{
+			Edit: types.WorkspaceEdit{
+				DocumentChanges: []types.TextDocumentEdit{
+					{
+						TextDocument: lsp.VersionedTextDocumentIdentifier{
+							TextDocumentIdentifier: lsp.TextDocumentIdentifier{
+								URI: filename,
 							},
-							Edits: edits,
+							Version: 0,
 						},
+						Edits: edits,
 					},
 				},
-			}
+			},
+		}
 
-			conn.Notify(ctx, "workspace/applyEdit", editParams)
-		}()
+		conn.Notify(ctx, "workspace/applyEdit", editParams)
+
+	case "answer":
+		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
+		startLine := int(cmd.Arguments[1].(float64))
+		endLine := int(cmd.Arguments[2].(float64))
+		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
+		implemented := l.answerQuestions(l.FileMap[filename], funcSnippet)
+
+		edits := []lsp.TextEdit{
+			{
+				Range: lsp.Range{
+					Start: lsp.Position{
+						Line:      startLine,
+						Character: 0,
+					},
+					End: lsp.Position{
+						Line:      endLine,
+						Character: len(strings.Split(l.FileMap[filename], "\n")[endLine]),
+					},
+				},
+				NewText: "\n" + implemented,
+			},
+		}
+
+		editParams := types.ApplyWorkspaceEditParams{
+			Edit: types.WorkspaceEdit{
+				DocumentChanges: []types.TextDocumentEdit{
+					{
+						TextDocument: lsp.VersionedTextDocumentIdentifier{
+							TextDocumentIdentifier: lsp.TextDocumentIdentifier{
+								URI: filename,
+							},
+							Version: 0,
+						},
+						Edits: edits,
+					},
+				},
+			},
+		}
+
+		conn.Notify(ctx, "workspace/applyEdit", editParams)
 	}
 	return nil
 }
@@ -296,6 +342,40 @@ func (l *SourcegraphLLM) implementTODOs(filecontents, function string) string {
 		implemented = resp
 	}
 	return strings.TrimSuffix(strings.TrimPrefix(implemented, "```go\n"), "\n```")
+}
+
+func (l *SourcegraphLLM) answerQuestions(filecontents, question string) string {
+	question = strings.TrimPrefix(strings.TrimSpace(question), "// ASK: ")
+	params := claude.DefaultCompletionParameters(getMessages(nil))
+	params.Messages = append(params.Messages,
+		claude.Message{
+			Speaker: "human",
+			Text: fmt.Sprintf(`Here are the contents of the file you are working in:
+%s`, filecontents),
+		},
+		claude.Message{
+			Speaker: "assistant",
+			Text:    "Ok.",
+		},
+		claude.Message{
+			Speaker: "human",
+			Text: fmt.Sprintf(`Answer this question. Prepend each line with `+"`//`"+` since you are in a code editor.
+
+%s`, question),
+		},
+		claude.Message{
+			Speaker: "assistant",
+			Text:    "// ANSWER: ",
+		})
+	retChan, err := l.ClaudeClient.GetCompletion(context.Background(), params, true)
+	if err != nil {
+		return ""
+	}
+	var answer string
+	for resp := range retChan {
+		answer = resp
+	}
+	return "// ASK: " + question + "\n" + answer
 }
 
 // sendDiagnostics sends the provided diagnostics back over the provided connection.
@@ -427,7 +507,6 @@ func getMessages(embeddingResults *embeddings.EmbeddingsSearchResult) []claude.M
 		Speaker: "assistant",
 		Text: `I am Cody, an AI-powered coding assistant developed by Sourcegraph. I operate inside a Language Server Protocol implementation. My task is to help programmers with programming tasks in the Go programming language.
 I am an expert in the Go programming language.
-I ignore import statements.
 I have access to your currently open files in the editor.
 I will generate suggestions as concisely and clearly as possible.
 I only suggest something if I am certain about my answer.`,
