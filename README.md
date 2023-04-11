@@ -35,6 +35,33 @@ Whatever you use to configure your LSP, it needs to provide a configuration in t
 
 See below example configurations for examples.
 
+#### No plugins
+
+```lua
+if vim.fn.executable "llmsp" == 1 then
+  vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile" }, {
+    pattern = { "*.go" },
+    callback = function()
+      vim.lsp.start {
+        name = "llmsp",
+        cmd = { "llmsp" },
+        root_dir = vim.fs.dirname(vim.fs.find({ 'go.mod', '.git' }, { upward = true })[1]),
+        capabilities = capabilities,
+        on_attach = on_attach,
+        settings = {
+          llmsp = {
+            sourcegraph = {
+              url = "SOURCEGRAPH_URL",
+              accessToken = "SOURCEGRAPH_ACCESS_TOKEN",
+            },
+          },
+        },
+      }
+    end,
+  })
+end
+```
+
 #### neovim/nvim-lspconfig
 
 In your Neovim LSP config:
