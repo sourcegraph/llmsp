@@ -23,6 +23,7 @@ type SourcegraphLLM struct {
 	URL              string
 	AccessToken      string
 	RepoID           string
+	RepoName         string
 	Mu               sync.Mutex
 	Context          *struct {
 		context.Context
@@ -60,6 +61,7 @@ func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
 				if err != nil {
 				} else {
 					l.RepoID = repoID
+					l.RepoName = rn
 				}
 			}
 		}
@@ -96,7 +98,7 @@ func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.Comple
 	if l.RepoID != "" {
 		embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, snippet, 8, 0)
 	}
-	claudeParams := claude.DefaultCompletionParameters(getMessages(embeddings))
+	claudeParams := claude.DefaultCompletionParameters(l.getMessages(embeddings))
 	claudeParams.Messages = append(claudeParams.Messages,
 		claude.Message{
 			Speaker: "human",
@@ -313,11 +315,11 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 }
 
 func (l *SourcegraphLLM) implementTODOs(filecontents, function string) string {
-	params := claude.DefaultCompletionParameters(getMessages(nil))
+	params := claude.DefaultCompletionParameters(l.getMessages(nil))
 	params.Messages = append(params.Messages,
 		claude.Message{
 			Speaker: "human",
-			Text: fmt.Sprintf(`Here are the contents of the file you are working in:
+			Text: fmt.Sprintf(`Here are the contents of the file I am working in:
 %s`, filecontents),
 		},
 		claude.Message{
@@ -349,9 +351,9 @@ func (l *SourcegraphLLM) answerQuestions(filecontents, question string) string {
 	var embeddings *embeddings.EmbeddingsSearchResult = nil
 	var err error
 	if l.RepoID != "" {
-		embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, question, 4, 4)
+		embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, question, 8, 2)
 	}
-	params := claude.DefaultCompletionParameters(getMessages(embeddings))
+	params := claude.DefaultCompletionParameters(l.getMessages(embeddings))
 	params.Messages = append(params.Messages,
 		claude.Message{
 			Speaker: "human",
@@ -394,7 +396,7 @@ func (l *SourcegraphLLM) sendDiagnostics(ctx context.Context, conn jsonrpc2.JSON
 		embeddingResults, _ = l.EmbeddingsClient.GetEmbeddings(repoID, snippet, 8, 0)
 	}
 
-	params := claude.DefaultCompletionParameters(getMessages(embeddingResults))
+	params := claude.DefaultCompletionParameters(l.getMessages(embeddingResults))
 	params.Messages = append(params.Messages, getSuggestionMessages(strings.TrimPrefix(filename, "file://"), snippet)...)
 
 	retChan, err := l.ClaudeClient.GetCompletion(ctx, params, true)
@@ -455,7 +457,7 @@ func (l *SourcegraphLLM) sendDiagnostics(ctx context.Context, conn jsonrpc2.JSON
 }
 
 func (l *SourcegraphLLM) getDocString(function string) string {
-	params := claude.DefaultCompletionParameters(getMessages(nil))
+	params := claude.DefaultCompletionParameters(l.getMessages(nil))
 	params.Messages = append(params.Messages, claude.Message{
 		Speaker: "human",
 		Text: fmt.Sprintf(`Generate a doc string explaining the use of the following Go function:
@@ -507,14 +509,18 @@ Line {number}: {suggestion}`, filename, content),
 	}
 }
 
-func getMessages(embeddingResults *embeddings.EmbeddingsSearchResult) []claude.Message {
-	messages := []claude.Message{{
-		Speaker: "assistant",
-		Text: `I am Cody, an AI-powered coding assistant developed by Sourcegraph. I operate inside a Language Server Protocol implementation. My task is to help programmers with programming tasks in the Go programming language.
+func (l *SourcegraphLLM) getMessages(embeddingResults *embeddings.EmbeddingsSearchResult) []claude.Message {
+	codyMessage := `I am Cody, an AI-powered coding assistant developed by Sourcegraph. I operate inside a Language Server Protocol implementation. My task is to help programmers with programming tasks in the Go programming language.
 I am an expert in the Go programming language.
 I have access to your currently open files in the editor.
 I will generate suggestions as concisely and clearly as possible.
-I only suggest something if I am certain about my answer.`,
+I only suggest something if I am certain about my answer.`
+	if l.RepoName != "" {
+		codyMessage += fmt.Sprintf("\nI have knowledge about the %s repository and can answer questions about it.", l.RepoName)
+	}
+	messages := []claude.Message{{
+		Speaker: "assistant",
+		Text:    codyMessage,
 	}}
 	if embeddingResults != nil {
 		for _, embedding := range embeddingResults.CodeResults {
