@@ -96,6 +96,24 @@ For other editors you are on your own :)
 
 It's also recommended to have a way to trigger code actions while in `VISUAL` mode, as the text selection is used for some code actions.
 
+## Neovim tips
+
+I've found the following setup to work rather well:
+
+```lua
+-- ...LSP keymaps
+-- Trigger code actions in NORMAL and VISUAL mode
+vim.keymap.set("n", "<space>ca", vim.lsp.buf.code_action, opts)
+vim.keymap.set("v", "<space>ca", vim.lsp.buf.code_action, opts)
+
+-- ... nvim-cmp settings
+mapping = cmp.mapping.preset.insert({
+-- ...
+  ['<C-Space>'] = cmp.mapping.complete(), -- Manual trigger completions
+-- ...
+}),
+```
+
 ## Play around with it
 
 Try to add your own code actions. Use the existing ones to see how to send edits back to the editor, play around with the prompts, etc.
