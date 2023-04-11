@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/pjlast/llmsp/claude"
 	"github.com/pjlast/llmsp/sourcegraph/embeddings"
@@ -21,6 +23,11 @@ type SourcegraphLLM struct {
 	URL              string
 	AccessToken      string
 	RepoID           string
+	Mu               sync.Mutex
+	Context          *struct {
+		context.Context
+		CancelFunc context.CancelFunc
+	}
 }
 
 func getGitURL() string {
@@ -61,11 +68,28 @@ func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
 	return nil
 }
 
-func (l *SourcegraphLLM) GetCompletions(params lsp.CompletionParams) ([]lsp.CompletionItem, error) {
-	if params.Context.TriggerKind != lsp.CTKInvoked {
-		return nil, nil
+func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.CompletionParams) ([]lsp.CompletionItem, error) {
+	l.Mu.Lock()
+	if l.Context != nil {
+		l.Context.CancelFunc()
 	}
-	snippet := getFileSnippet(l.FileMap[params.TextDocument.URI], 0, params.Position.Line)
+	ctx, cancel := context.WithCancel(ctx)
+
+	l.Context = &struct {
+		context.Context
+		CancelFunc context.CancelFunc
+	}{ctx, cancel}
+	l.Mu.Unlock()
+	time.Sleep(250 * time.Millisecond)
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("context canceled")
+	}
+
+	startLine := params.Position.Line
+	if params.Position.Line < 20 {
+		startLine = 0
+	}
+	snippet := getFileSnippet(l.FileMap[params.TextDocument.URI], startLine, params.Position.Line)
 
 	var embeddings *embeddings.EmbeddingsSearchResult = nil
 	var err error
@@ -73,16 +97,26 @@ func (l *SourcegraphLLM) GetCompletions(params lsp.CompletionParams) ([]lsp.Comp
 		embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, snippet, 8, 0)
 	}
 	claudeParams := claude.DefaultCompletionParameters(getMessages(embeddings))
-	claudeParams.Messages = append(claudeParams.Messages, claude.Message{
-		Speaker: "human",
-		Text: fmt.Sprintf(`Suggest a code snippet to complete the following Go code. Provide only the suggestion, nothing else.
+	claudeParams.Messages = append(claudeParams.Messages,
+		claude.Message{
+			Speaker: "human",
+			Text: fmt.Sprintf(`Here are the contents of the file you are working in:
+%s`, l.FileMap[params.TextDocument.URI]),
+		},
+		claude.Message{
+			Speaker: "assistant",
+			Text:    "Ok.",
+		},
+		claude.Message{
+			Speaker: "human",
+			Text: fmt.Sprintf(`Suggest a code snippet to complete the following Go code. Provide only the suggestion, nothing else.
 %s`, snippet),
-	},
+		},
 		claude.Message{
 			Speaker: "assistant",
 			Text:    "```go\n" + strings.Split(snippet, "\n")[len(strings.Split(snippet, "\n"))-1],
 		})
-	retChan, err := l.ClaudeClient.GetCompletion(claudeParams, false)
+	retChan, err := l.ClaudeClient.GetCompletion(ctx, claudeParams, false)
 	if err != nil {
 		return nil, err
 	}
@@ -92,18 +126,27 @@ func (l *SourcegraphLLM) GetCompletions(params lsp.CompletionParams) ([]lsp.Comp
 	}
 	completion = strings.TrimSuffix(strings.TrimPrefix(completion, "```go\n"), "\n```")
 
+	textEdit := &lsp.TextEdit{
+		Range: lsp.Range{
+			Start: lsp.Position{
+				Line: params.Position.Line,
+			},
+			End: params.Position,
+		},
+		NewText: strings.Split(l.FileMap[params.TextDocument.URI], "\n")[params.Position.Line] + completion,
+	}
 	return []lsp.CompletionItem{
 		{
-			Label:      "LLMSP",
-			Kind:       lsp.CIKSnippet,
-			InsertText: completion,
-			Detail:     strings.Split(snippet, "\n")[params.Position.Line] + completion,
+			Label:    strings.TrimSpace(strings.Split(l.FileMap[params.TextDocument.URI], "\n")[params.Position.Line] + completion),
+			Kind:     lsp.CIKSnippet,
+			TextEdit: textEdit,
+			Detail:   strings.Split(l.FileMap[params.TextDocument.URI], "\n")[params.Position.Line] + completion,
 		},
 	}, nil
 }
 
 func (l *SourcegraphLLM) GetCodeActions(doc lsp.DocumentURI, selection lsp.Range) []lsp.Command {
-	return []lsp.Command{
+	commands := []lsp.Command{
 		{
 			Title:     "Provide suggestions",
 			Command:   "suggest",
@@ -114,12 +157,15 @@ func (l *SourcegraphLLM) GetCodeActions(doc lsp.DocumentURI, selection lsp.Range
 			Command:   "docstring",
 			Arguments: []interface{}{doc, selection.Start.Line, selection.End.Line},
 		},
-		{
+	}
+	if strings.Contains(strings.Join(strings.Split(l.FileMap[doc], "\n")[selection.Start.Line:selection.End.Line+1], "\n"), "// TODO") {
+		commands = append(commands, lsp.Command{
 			Title:     "Implement TODOs",
 			Command:   "todos",
 			Arguments: []interface{}{doc, selection.Start.Line, selection.End.Line},
-		},
+		})
 	}
+	return commands
 }
 
 func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, conn *jsonrpc2.Conn) error {
@@ -180,7 +226,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 			startLine := int(cmd.Arguments[1].(float64))
 			endLine := int(cmd.Arguments[2].(float64))
 			funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
-			implemented := l.implementTODOs(funcSnippet)
+			implemented := l.implementTODOs(l.FileMap[filename], funcSnippet)
 
 			edits := []lsp.TextEdit{
 				{
@@ -220,19 +266,28 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 	return nil
 }
 
-func (l *SourcegraphLLM) implementTODOs(function string) string {
+func (l *SourcegraphLLM) implementTODOs(filecontents, function string) string {
 	params := claude.DefaultCompletionParameters(getMessages(nil))
-	params.Messages = append(params.Messages, claude.Message{
-		Speaker: "human",
-		Text: fmt.Sprintf(`The following Go code contains TODO instructions. Replace the TODO comments by implementing them. Import any Go libraries that would help complete the task. Only provide the completed code. Don't say anything else.
-Keep the original code I provided as part of your answer.
+	params.Messages = append(params.Messages,
+		claude.Message{
+			Speaker: "human",
+			Text: fmt.Sprintf(`Here are the contents of the file you are working in:
+%s`, filecontents),
+		},
+		claude.Message{
+			Speaker: "assistant",
+			Text:    "Ok.",
+		},
+		claude.Message{
+			Speaker: "human",
+			Text: fmt.Sprintf(`The following Go code contains TODO instructions. Replace the TODO comments by implementing them. Import any Go libraries that would help complete the task. Only provide the completed code. Don't say anything else.
 %s`, function),
-	},
+		},
 		claude.Message{
 			Speaker: "assistant",
 			Text:    "```go",
 		})
-	retChan, err := l.ClaudeClient.GetCompletion(params, true)
+	retChan, err := l.ClaudeClient.GetCompletion(context.Background(), params, true)
 	if err != nil {
 		return ""
 	}
@@ -257,7 +312,7 @@ func (l *SourcegraphLLM) sendDiagnostics(ctx context.Context, conn jsonrpc2.JSON
 	params := claude.DefaultCompletionParameters(getMessages(embeddingResults))
 	params.Messages = append(params.Messages, getSuggestionMessages(strings.TrimPrefix(filename, "file://"), snippet)...)
 
-	retChan, err := l.ClaudeClient.GetCompletion(params, true)
+	retChan, err := l.ClaudeClient.GetCompletion(ctx, params, true)
 
 	for completionResp := range retChan {
 		diagnostics := []lsp.Diagnostic{}
@@ -327,7 +382,7 @@ Don't include the function in your output.`, function),
 			Speaker: "assistant",
 			Text:    "//",
 		})
-	retChan, err := l.ClaudeClient.GetCompletion(params, true)
+	retChan, err := l.ClaudeClient.GetCompletion(context.Background(), params, true)
 	if err != nil {
 		return ""
 	}

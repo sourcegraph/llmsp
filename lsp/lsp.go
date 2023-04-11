@@ -17,7 +17,7 @@ type Server struct {
 
 type LLMProvider interface {
 	Initialize(types.LLMSPSettings) error
-	GetCompletions(lsp.CompletionParams) ([]lsp.CompletionItem, error)
+	GetCompletions(context.Context, types.CompletionParams) ([]lsp.CompletionItem, error)
 	GetCodeActions(lsp.DocumentURI, lsp.Range) []lsp.Command
 	ExecuteCommand(context.Context, lsp.Command, *jsonrpc2.Conn) error
 }
@@ -38,10 +38,12 @@ func (s *Server) Handle() jsonrpc2.Handler {
 					Change:    lsp.TDSKFull,
 				},
 			}
-			completionOptions := lsp.CompletionOptions{}
+			completionOptions := types.CompletionOptions{
+				WorkDoneProgress: true,
+			}
 
-			return lsp.InitializeResult{
-				Capabilities: lsp.ServerCapabilities{
+			return types.InitializeResult{
+				Capabilities: types.ServerCapabilities{
 					TextDocumentSync:   &opts,
 					CodeActionProvider: true,
 					CompletionProvider: &completionOptions,
@@ -77,36 +79,23 @@ func (s *Server) Handle() jsonrpc2.Handler {
 				return nil, err
 			}
 
-			commands := []lsp.Command{
-				{
-					Title:     "Provide suggestions",
-					Command:   "suggest",
-					Arguments: []interface{}{params.TextDocument.URI, params.Range.Start.Line, params.Range.End.Line},
-				},
-				{
-					Title:     "Generate docstring",
-					Command:   "docstring",
-					Arguments: []interface{}{params.TextDocument.URI, params.Range.Start.Line, params.Range.End.Line},
-				},
-				{
-					Title:     "Implement TODOs",
-					Command:   "todos",
-					Arguments: []interface{}{params.TextDocument.URI, params.Range.Start.Line, params.Range.End.Line},
-				},
-			}
-
-			return commands, nil
+			return s.Provider.GetCodeActions(params.TextDocument.URI, params.Range), nil
 
 		case "textDocument/completion":
-			var params lsp.CompletionParams
+			var params types.CompletionParams
 			if err := json.Unmarshal(*req.Params, &params); err != nil {
 				return nil, err
 			}
-			if params.Context.TriggerKind != lsp.CTKInvoked {
-				return []lsp.CompletionItem{}, nil
+
+			completions, err := s.Provider.GetCompletions(ctx, params)
+			if err != nil {
+				return nil, err
 			}
 
-			return s.Provider.GetCompletions(params)
+			return types.CompletionList{
+				IsIncomplete: false,
+				Items:        completions,
+			}, nil
 
 		case "workspace/didChangeConfiguration":
 			var params types.DidChangeConfigurationParams

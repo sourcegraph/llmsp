@@ -3,6 +3,7 @@ package claude
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -51,7 +52,7 @@ func DefaultCompletionParameters(messages []Message) *CompletionParameters {
 	}
 }
 
-func (c *Client) GetCompletion(params *CompletionParameters, includePromptText bool) (chan string, error) {
+func (c *Client) GetCompletion(ctx context.Context, params *CompletionParameters, includePromptText bool) (chan string, error) {
 	retChan := make(chan string)
 	completionsPath, err := url.JoinPath(c.URL, "/.api/completions/stream")
 	if err != nil {
@@ -63,7 +64,7 @@ func (c *Client) GetCompletion(params *CompletionParameters, includePromptText b
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", completionsPath, bytes.NewBuffer(reqBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", completionsPath, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, err
 	}

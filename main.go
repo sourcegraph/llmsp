@@ -30,5 +30,5 @@ func main() {
 	llmsp := &lsp.Server{
 		FileMap: make(types.MemoryFileMap),
 	}
-	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), llmsp.Handle()).DisconnectNotify()
+	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), jsonrpc2.AsyncHandler(llmsp.Handle())).DisconnectNotify()
 }
