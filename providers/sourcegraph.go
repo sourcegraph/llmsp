@@ -323,7 +323,7 @@ func (l *SourcegraphLLM) implementTODOs(filecontents, function string) string {
 	params.Messages = append(params.Messages,
 		claude.Message{
 			Speaker: "human",
-			Text: fmt.Sprintf(`Here are the contents of the file I am working in:
+			Text: fmt.Sprintf(`Here are the contents of the file you are working in:
 %s`, filecontents),
 		},
 		claude.Message{
@@ -332,7 +332,8 @@ func (l *SourcegraphLLM) implementTODOs(filecontents, function string) string {
 		},
 		claude.Message{
 			Speaker: "human",
-			Text: fmt.Sprintf(`The following Go code contains TODO instructions. Replace the TODO comments by implementing them. Import any Go libraries that would help complete the task. Only provide the completed code. Don't say anything else.
+			Text: fmt.Sprintf(`The following Go code contains TODO instructions. Produce code that will implement the TODO. Don't say anything else.
+Here is the code snippet:
 %s`, function),
 		},
 		claude.Message{
