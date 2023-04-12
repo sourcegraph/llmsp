@@ -266,7 +266,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 						Character: len(strings.Split(l.FileMap[filename], "\n")[endLine]),
 					},
 				},
-				NewText: "\n" + implemented,
+				NewText: implemented,
 			},
 		}
 

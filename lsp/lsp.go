@@ -11,8 +11,9 @@ import (
 )
 
 type Server struct {
-	Provider LLMProvider
-	FileMap  types.MemoryFileMap
+	initialized bool
+	Provider    LLMProvider
+	FileMap     types.MemoryFileMap
 }
 
 type LLMProvider interface {
@@ -24,6 +25,10 @@ type LLMProvider interface {
 
 func (s *Server) Handle() jsonrpc2.Handler {
 	return jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
+		if !s.initialized && !(req.Method == "initialize" || req.Method == "workspace/didChangeConfiguration" || req.Method == "textDocument/didChange" || req.Method == "textDocument/didOpen") {
+			conn.Notify(ctx, "window/logMessage", lsp.LogMessageParams{Type: lsp.MTWarning, Message: "LLMSP not yet initialized"})
+			return nil, nil
+		}
 		switch req.Method {
 		case "initialize":
 			var params lsp.InitializeParams
@@ -117,6 +122,8 @@ func (s *Server) Handle() jsonrpc2.Handler {
 				return nil, err
 			}
 			s.Provider = provider
+			s.initialized = true
+			conn.Notify(ctx, "window/logMessage", lsp.LogMessageParams{Type: lsp.MTWarning, Message: "LLMSP initialized!"})
 
 			return nil, nil
 
