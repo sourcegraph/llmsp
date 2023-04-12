@@ -30,6 +30,10 @@ func (s *Server) Handle() jsonrpc2.Handler {
 			if err := json.Unmarshal(*req.Params, &params); err != nil {
 				return nil, err
 			}
+			provider := &providers.SourcegraphLLM{
+				FileMap: s.FileMap,
+			}
+			s.Provider = provider
 
 			opts := lsp.TextDocumentSyncOptionsOrKind{
 				Options: &lsp.TextDocumentSyncOptions{
@@ -41,12 +45,16 @@ func (s *Server) Handle() jsonrpc2.Handler {
 			completionOptions := types.CompletionOptions{
 				WorkDoneProgress: true,
 			}
+			ecopts := lsp.ExecuteCommandOptions{
+				Commands: []string{"todos", "suggest", "answer", "docstring"},
+			}
 
 			return types.InitializeResult{
 				Capabilities: types.ServerCapabilities{
-					TextDocumentSync:   &opts,
-					CodeActionProvider: true,
-					CompletionProvider: &completionOptions,
+					TextDocumentSync:       &opts,
+					CodeActionProvider:     true,
+					CompletionProvider:     &completionOptions,
+					ExecuteCommandProvider: &ecopts,
 				},
 			}, nil
 

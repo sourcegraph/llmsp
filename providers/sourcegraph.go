@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -226,7 +227,8 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 			},
 		}
 
-		conn.Notify(ctx, "workspace/applyEdit", editParams)
+		var res json.RawMessage
+		go func() { conn.Call(ctx, "workspace/applyEdit", editParams, &res) }()
 		return nil
 
 	case "todos":
@@ -268,7 +270,8 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 			},
 		}
 
-		conn.Notify(ctx, "workspace/applyEdit", editParams)
+		var res json.RawMessage
+		conn.Call(ctx, "workspace/applyEdit", editParams, &res)
 
 	case "answer":
 		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
@@ -309,7 +312,8 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 			},
 		}
 
-		conn.Notify(ctx, "workspace/applyEdit", editParams)
+		var res json.RawMessage
+		conn.Call(ctx, "workspace/applyEdit", editParams, &res)
 	}
 	return nil
 }

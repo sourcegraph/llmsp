@@ -53,8 +53,8 @@ type CompletionOptions struct {
 type CompletionParams struct {
 	lsp.TextDocumentPositionParams
 	Context            lsp.CompletionContext `json:"context,omitempty"`
-	PartialResultToken int                `json:"partialResultToken,omitempty"`
-	WorkDoneToken      int                `json:"workDoneToken,omitempty"`
+	PartialResultToken int                   `json:"partialResultToken,omitempty"`
+	WorkDoneToken      int                   `json:"workDoneToken,omitempty"`
 }
 
 type ProgressParams[T any] struct {
@@ -64,6 +64,10 @@ type ProgressParams[T any] struct {
 
 type InitializeResult struct {
 	Capabilities ServerCapabilities `json:"capabilities,omitempty"`
+}
+
+type CodeActionOptions struct {
+	ResolveProvider bool `json:"resolveProvider"`
 }
 
 type ServerCapabilities struct {
@@ -104,6 +108,16 @@ type ServerCapabilities struct {
 }
 
 type CompletionItem struct {
-  lsp.CompletionItem
-  Preselect bool `json:"preselect,omitempty"`
+	lsp.CompletionItem
+	Preselect bool `json:"preselect,omitempty"`
+}
+
+type CodeAction struct {
+	Title          string             `json:"title"`
+	Kind           lsp.CodeActionKind `json:"kind,omitempty"`
+	Diagnostics    []lsp.Diagnostic   `json:"diagnostics,omitempty"`
+	IsPrePreferred bool               `json:"isPreferred,omitempty"`
+	Edit           WorkspaceEdit      `json:"edit,omitempty"`
+	Command        lsp.Command        `json:"command,omitempty"`
+	Data           []any              `json:"data,omitempty"`
 }
