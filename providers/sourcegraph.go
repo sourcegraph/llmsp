@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/pjlast/llmsp/claude"
 	"github.com/pjlast/llmsp/sourcegraph/embeddings"
@@ -38,6 +37,22 @@ func getGitURL() string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func truncateText(text string, maxTokens int) string {
+	maxLength := maxTokens * 4
+	if len(text) < maxLength {
+		return text
+	}
+	return text[:maxLength]
+}
+
+func truncateTextStart(text string, maxTokens int) string {
+	maxLength := maxTokens * 4
+	if len(text) < maxLength {
+		return text
+	}
+	return text[len(text)-maxLength:]
 }
 
 func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
@@ -83,12 +98,11 @@ func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.Comple
 		CancelFunc context.CancelFunc
 	}{ctx, cancel}
 	l.Mu.Unlock()
-	time.Sleep(250 * time.Millisecond)
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("context canceled")
 	}
 
-	startLine := params.Position.Line
+	startLine := params.Position.Line - 20
 	if params.Position.Line < 20 {
 		startLine = 0
 	}
@@ -104,7 +118,7 @@ func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.Comple
 		claude.Message{
 			Speaker: "human",
 			Text: fmt.Sprintf(`Here are the contents of the file you are working in:
-%s`, l.FileMap[params.TextDocument.URI]),
+%s`, truncateText(l.FileMap[params.TextDocument.URI], 1000)),
 		},
 		claude.Message{
 			Speaker: "assistant",
@@ -112,8 +126,10 @@ func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.Comple
 		},
 		claude.Message{
 			Speaker: "human",
-			Text: fmt.Sprintf(`Suggest a code snippet to complete the following Go code. Provide only the suggestion, nothing else.
-%s`, snippet),
+			Text: fmt.Sprintf(`Here is some Go code I am busy typing:
+%s
+
+Given the file we are in, what is the most logical next block of code? Provide only the block of code, nothing else.`, snippet),
 		},
 		claude.Message{
 			Speaker: "assistant",
