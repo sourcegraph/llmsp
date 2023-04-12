@@ -97,6 +97,9 @@ func (s *Server) Handle() jsonrpc2.Handler {
 
 			completions, err := s.Provider.GetCompletions(ctx, params)
 			if err != nil {
+				if err.Error() == "context canceled" {
+					return nil, nil
+				}
 				return nil, err
 			}
 
