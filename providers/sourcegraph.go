@@ -132,9 +132,7 @@ func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
 
 	gitURL := getGitURL()
 	if gitURL != "" {
-		urlAndRepo := strings.Split(strings.Split(gitURL, "@")[1], ":")
-		baseURL := urlAndRepo[0]
-		repoName := baseURL + "/" + strings.TrimSuffix(urlAndRepo[1], ".git")
+		repoName := getRepoName(gitURL)
 
 		for _, rn := range settings.Sourcegraph.RepoEmbeddings {
 			if rn == repoName {
@@ -149,6 +147,35 @@ func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
 	}
 
 	return nil
+}
+
+func getRepoName(gitURL string) string {
+	// Check if URL contains @ but not :// (SSH URL)
+	if strings.Contains(gitURL, "@") && !strings.Contains(gitURL, "://") {
+		// Split on @ and : to get base URL and repo name
+		urlAndRepo := strings.Split(strings.Split(gitURL, "@")[1], ":")
+		baseURL := urlAndRepo[0]
+		repoName := baseURL + "/" + strings.TrimSuffix(urlAndRepo[1], ".git")
+		return repoName
+	} else if strings.Contains(gitURL, "://") { // Check if URL contains :// (HTTPS URL)
+		// Split on :// to get protocol and rest of URL
+		urlParts := strings.Split(gitURL, "://")
+		// Check if rest of URL contains @ (for GitHub URLs)
+		if strings.Contains(urlParts[1], "@") {
+			// Split on @ to get base URL
+			urlParts = strings.Split(urlParts[1], "@")
+			baseURL := urlParts[1]
+			repoName := strings.TrimSuffix(baseURL, ".git")
+			return repoName
+		}
+		// No @, so base URL is entire part after ://
+		baseURL := urlParts[1]
+		repoName := strings.TrimSuffix(baseURL, ".git")
+		return repoName
+	} else { // Otherwise assume URL is just repo path
+		repoName := gitURL + "/" + strings.TrimSuffix(strings.Split(gitURL, "/")[1], ".git")
+		return repoName
+	}
 }
 
 func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.CompletionParams) ([]types.CompletionItem, error) {
