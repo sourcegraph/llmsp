@@ -132,7 +132,12 @@ func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
 
 	gitURL := getGitURL()
 	if gitURL != "" {
-		urlAndRepo := strings.Split(strings.Split(gitURL, "@")[1], ":")
+		// git@github.com/pjlast/llmsp
+		idx := strings.Index(gitURL, "@")
+		if idx > 0 {
+			gitURL = gitURL[idx:]
+		}
+		urlAndRepo := strings.Split(gitURL, ":")
 		baseURL := urlAndRepo[0]
 		repoName := baseURL + "/" + strings.TrimSuffix(urlAndRepo[1], ".git")
 
