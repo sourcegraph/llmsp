@@ -40,7 +40,7 @@ See below example configurations for examples.
 ```lua
 if vim.fn.executable "llmsp" == 1 then
   vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile" }, {
-    pattern = { "*.go" },
+    pattern = { "*" },
     callback = function()
       vim.lsp.start {
         name = "llmsp",

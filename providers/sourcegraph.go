@@ -453,7 +453,11 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 }
 
 func (l *SourcegraphLLM) codyDo(filename, filecontents, function, instruction string, codeOnly bool) string {
-	params := claude.DefaultCompletionParameters(l.getMessages(filename, nil))
+	var embeddings *embeddings.EmbeddingsSearchResult
+	if l.RepoID != "" {
+		embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, instruction, 8, 2)
+	}
+	params := claude.DefaultCompletionParameters(l.getMessages(filename, embeddings))
 	var assistantText string
 	if codeOnly {
 		assistantText = fmt.Sprintf("```%s\n", strings.ToLower(determineLanguage(filename)))
