@@ -357,6 +357,56 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		var res json.RawMessage
 		conn.Call(ctx, "workspace/applyEdit", editParams, &res)
 
+	case "cody":
+		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
+		startLine := int(cmd.Arguments[1].(float64))
+		endLine := int(cmd.Arguments[2].(float64))
+		instruction := cmd.Arguments[3].(string)
+		overwrite := cmd.Arguments[4].(bool)
+		codeOnly := cmd.Arguments[5].(bool)
+
+		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
+		implemented := l.codyDo(string(filename), l.FileMap[filename], funcSnippet, instruction, codeOnly)
+
+		if !overwrite {
+			implemented += funcSnippet
+		}
+
+		edits := []lsp.TextEdit{
+			{
+				Range: lsp.Range{
+					Start: lsp.Position{
+						Line:      startLine,
+						Character: 0,
+					},
+					End: lsp.Position{
+						Line:      endLine,
+						Character: len(strings.Split(l.FileMap[filename], "\n")[endLine]),
+					},
+				},
+				NewText: implemented,
+			},
+		}
+
+		editParams := types.ApplyWorkspaceEditParams{
+			Edit: types.WorkspaceEdit{
+				DocumentChanges: []types.TextDocumentEdit{
+					{
+						TextDocument: lsp.VersionedTextDocumentIdentifier{
+							TextDocumentIdentifier: lsp.TextDocumentIdentifier{
+								URI: filename,
+							},
+							Version: 0,
+						},
+						Edits: edits,
+					},
+				},
+			},
+		}
+
+		var res json.RawMessage
+		conn.Call(ctx, "workspace/applyEdit", editParams, &res)
+
 	case "answer":
 		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
 		startLine := int(cmd.Arguments[1].(float64))
@@ -400,6 +450,50 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		conn.Call(ctx, "workspace/applyEdit", editParams, &res)
 	}
 	return nil
+}
+
+func (l *SourcegraphLLM) codyDo(filename, filecontents, function, instruction string, codeOnly bool) string {
+	params := claude.DefaultCompletionParameters(l.getMessages(filename, nil))
+	var assistantText string
+	if codeOnly {
+		assistantText = fmt.Sprintf("```%s\n", strings.ToLower(determineLanguage(filename)))
+	}
+	params.Messages = append(params.Messages,
+		claude.Message{
+			Speaker: claude.Human,
+			Text: fmt.Sprintf(`Here are the contents of the file you are working in:
+%s`, filecontents),
+		},
+		claude.Message{
+			Speaker: claude.Assistant,
+			Text:    "Ok.",
+		},
+		claude.Message{
+			Speaker: claude.Human,
+			Text:    fmt.Sprintf(`The programming language is %s`, determineLanguage(filename)),
+		},
+		claude.Message{
+			Speaker: claude.Assistant,
+			Text:    "Ok.",
+		},
+		claude.Message{
+			Speaker: claude.Human,
+			Text: fmt.Sprintf(`%s
+%s`, instruction, function),
+		},
+		claude.Message{
+			Speaker: claude.Assistant,
+			Text:    assistantText,
+		})
+	implemented, err := l.ClaudeClient.GetCompletion(context.Background(), params, true)
+	if err != nil {
+		return ""
+	}
+	if codeOnly {
+		implemented = strings.TrimPrefix(implemented[:strings.Index(implemented, "\n```")], fmt.Sprintf("```%s\n", strings.ToLower(determineLanguage(filename))))
+	}
+
+	return implemented
 }
 
 func (l *SourcegraphLLM) implementTODOs(filename, filecontents, function string) string {

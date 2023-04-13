@@ -3,6 +3,7 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/pjlast/llmsp/providers"
@@ -22,6 +23,7 @@ type Server struct {
 		Enabled bool
 		Verbose bool
 	}
+	Mu sync.Mutex
 }
 
 type LLMProvider interface {
@@ -83,7 +85,7 @@ func (s *Server) Handle() jsonrpc2.Handler {
 				WorkDoneProgress: true,
 			}
 			ecopts := lsp.ExecuteCommandOptions{
-				Commands: []string{"todos", "suggest", "answer", "docstring"},
+				Commands: []string{"todos", "suggest", "answer", "docstring", "cody"},
 			}
 
 			return types.InitializeResult{
@@ -104,7 +106,9 @@ func (s *Server) Handle() jsonrpc2.Handler {
 				return nil, err
 			}
 
+			s.Mu.Lock()
 			s.FileMap[params.TextDocument.URI] = params.ContentChanges[0].Text
+			defer s.Mu.Unlock()
 
 			return nil, nil
 
