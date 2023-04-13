@@ -490,7 +490,10 @@ func (l *SourcegraphLLM) codyDo(filename, filecontents, function, instruction st
 		return ""
 	}
 	if codeOnly {
-		implemented = strings.TrimPrefix(implemented[:strings.Index(implemented, "\n```")], fmt.Sprintf("```%s\n", strings.ToLower(determineLanguage(filename))))
+		if index := strings.Index(implemented, "\n```"); index != -1 {
+			implemented = implemented[:index]
+		}
+		implemented = strings.TrimPrefix(implemented, fmt.Sprintf("```%s\n", strings.ToLower(determineLanguage(filename))))
 	}
 
 	return implemented
