@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pjlast/llmsp/claude"
 	"github.com/pjlast/llmsp/sourcegraph/embeddings"
@@ -153,20 +154,21 @@ func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
 func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.CompletionParams) ([]types.CompletionItem, error) {
 	currentLine := strings.Split(l.FileMap[params.TextDocument.URI], "\n")[params.Position.Line]
 	indentation := currentLine[:len(currentLine)-len(strings.TrimLeft(currentLine, " \t"))]
-	// l.Mu.Lock()
-	// if l.Context != nil {
-	// 	l.Context.CancelFunc()
-	// }
-	// ctx, cancel := context.WithCancel(ctx)
+	l.Mu.Lock()
+	if l.Context != nil {
+		l.Context.CancelFunc()
+	}
+	ctx, cancel := context.WithCancel(ctx)
 
-	// l.Context = &struct {
-	// 	context.Context
-	// 	CancelFunc context.CancelFunc
-	// }{ctx, cancel}
-	// l.Mu.Unlock()
-	// if ctx.Err() != nil {
-	// 	return nil, fmt.Errorf("context canceled")
-	// }
+	l.Context = &struct {
+		context.Context
+		CancelFunc context.CancelFunc
+	}{ctx, cancel}
+	l.Mu.Unlock()
+	time.Sleep(100 * time.Millisecond) // To not spam the server when rapidly typing
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("context canceled")
+	}
 
 	// startLine := params.Position.Line - 20
 	// if params.Position.Line < 20 {
