@@ -39,9 +39,23 @@ type DidChangeConfigurationParams struct {
 	Settings ConfigurationSettings `json:"settings"`
 }
 
+type CompletionItem struct {
+	Label            string                 `json:"label"`
+	Kind             lsp.CompletionItemKind `json:"kind,omitempty"`
+	Detail           string                 `json:"detail,omitempty"`
+	Documentation    string                 `json:"documentation,omitempty"`
+	SortText         string                 `json:"sortText,omitempty"`
+	FilterText       string                 `json:"filterText,omitempty"`
+	InsertText       string                 `json:"insertText,omitempty"`
+	InsertTextFormat lsp.InsertTextFormat   `json:"insertTextFormat,omitempty"`
+	InsertTextMode   int                    `json:"insertTextMode,omitempty"`
+	TextEdit         *lsp.TextEdit          `json:"textEdit,omitempty"`
+	Data             interface{}            `json:"data,omitempty"`
+}
+
 type CompletionList struct {
-	IsIncomplete bool                 `json:"isIncomplete"`
-	Items        []lsp.CompletionItem `json:"items"`
+	IsIncomplete bool             `json:"isIncomplete"`
+	Items        []CompletionItem `json:"items"`
 }
 
 type CompletionOptions struct {
@@ -107,11 +121,6 @@ type ServerCapabilities struct {
 	Experimental interface{} `json:"experimental,omitempty"`
 }
 
-type CompletionItem struct {
-	lsp.CompletionItem
-	Preselect bool `json:"preselect,omitempty"`
-}
-
 type CodeAction struct {
 	Title          string             `json:"title"`
 	Kind           lsp.CodeActionKind `json:"kind,omitempty"`
@@ -135,4 +144,9 @@ type WorkDoneProgressEnd struct {
 
 type WorkDoneProgressCreateParams struct {
 	Token string `json:"token"`
+}
+
+type LogTraceParams struct {
+	Message string `json:"message"`
+	Verbose string `json:"verbose,omitempty"`
 }

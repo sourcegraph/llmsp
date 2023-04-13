@@ -10,18 +10,24 @@ import (
 	"strings"
 )
 
+type Speaker string
+
+const (
+	Human     Speaker = "HUMAN"
+	Assistant Speaker = "ASSISTANT"
+)
+
 type Message struct {
-	Speaker  string `json:"speaker"`
-	Text     string `json:"text"`
-	FileName string `json:"fileName,omitempty"`
+	Speaker Speaker `json:"speaker"`
+	Text    string  `json:"text"`
 }
 
 type CompletionParameters struct {
-	Messages          []Message
-	Temperature       float32
-	MaxTokensToSample int
-	TopK              int
-	TopP              int
+	Messages          []Message `json:"messages"`
+	Temperature       float32   `json:"temperature"`
+	MaxTokensToSample int       `json:"maxTokensToSample"`
+	TopK              int       `json:"topK"`
+	TopP              int       `json:"topP"`
 }
 
 type Client struct {
@@ -52,13 +58,96 @@ func DefaultCompletionParameters(messages []Message) *CompletionParameters {
 	}
 }
 
-func (c *Client) GetCompletion(ctx context.Context, params *CompletionParameters, includePromptText bool) (chan string, error) {
+type message struct {
+	Speaker string `json:"speaker"`
+	Text    string `json:"text"`
+}
+
+type completionInput struct {
+	Messages []message `json:"messages"`
+}
+
+type GraphQLQuery[T any] struct {
+	Query     string `json:"query"`
+	Variables T      `json:"variables"`
+}
+
+const getCompletionsQuery = `query GetCompletions($messages: [Message!]!, $temperature: Float!, $maxTokensToSample: Int!, $topK: Int!, $topP: Int!) {
+  completions(input: {
+    messages: $messages,
+    temperature: $temperature,
+    maxTokensToSample: $maxTokensToSample,
+    topK: $topK,
+    topP: $topP
+  })
+}`
+
+type completions struct {
+	Data struct {
+		Completions string
+	}
+	Errors []struct {
+		Message   string
+		Locations []struct {
+			Line   int
+			Column int
+		}
+	}
+}
+
+func (c *Client) GetCompletion(ctx context.Context, params *CompletionParameters, includePromptText bool) (string, error) {
+	completionsPath, err := url.JoinPath(c.URL, "/.api/graphql")
+	if err != nil {
+		return "", err
+	}
+
+	q := GraphQLQuery[CompletionParameters]{
+		Query:     getCompletionsQuery,
+		Variables: *params,
+	}
+
+	body, err := json.Marshal(q)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", completionsPath, bytes.NewBuffer(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Add("Content-Type", "application/json; charset=utf-8")
+	req.Header.Add("Authorization", "token "+c.authToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+
+	var completion completions
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(&completion); err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	completionText := completion.Data.Completions
+	if includePromptText {
+		completionText = params.Messages[len(params.Messages)-1].Text + completionText
+	}
+
+	return completionText, nil
+}
+
+func (c *Client) StreamCompletion(ctx context.Context, params *CompletionParameters, includePromptText bool) (chan string, error) {
 	retChan := make(chan string)
 	completionsPath, err := url.JoinPath(c.URL, "/.api/completions/stream")
 	if err != nil {
 		return nil, err
 	}
 
+	for i, m := range params.Messages {
+		params.Messages[i].Speaker = Speaker(strings.ToLower(string(m.Speaker)))
+	}
 	reqBody, err := json.Marshal(params)
 	if err != nil {
 		return nil, err

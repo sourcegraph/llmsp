@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/pjlast/llmsp/claude"
 )
@@ -14,37 +16,36 @@ func main() {
 
 	messages := []claude.Message{
 		{
-			Speaker: "assistant",
+			Speaker: "ASSISTANT",
 			Text: `I am Cody, an AI-powered coding assistant developed by Sourcegraph. I operate inside a Language Server Protocol implementation. My task is to help programmers with programming tasks in the Go programming language.
 I have access to your currently open files in the editor.
 I will generate suggestions as concisely and clearly as possible.
 I only suggest something if I am certain about my answer.`,
 		},
 		{
-			Speaker: "human",
-			Text: `Suggest a code snippet to complete the following code:
-func printWords(words []string) {
-`,
+			Speaker: "HUMAN",
+			Text: `Suggest a code snippet to complete the following code. Continue from where I left off.:
+func isPrim`,
 		},
 		{
-			Speaker: "assistant",
-			Text: "```go" + `
-func printWords(words []string) {`,
+			Speaker: "ASSISTANT",
+			Text:    "```go\n",
 		},
 	}
 
 	params := claude.DefaultCompletionParameters(messages)
 
-	completion, err := cli.GetCompletion(params, false)
-	if err != nil {
-		fmt.Println(err)
-		return
+	start := time.Now()
+	retChan, _ := cli.StreamCompletion(context.Background(), params, true)
+	for range retChan {
 	}
+	fmt.Println(time.Now().Sub(start))
 
-	complete := ""
-	for val := range completion {
-		complete = val
-	}
-
-	fmt.Println(complete)
+	// start := time.Now()
+	// _, err := cli.GetCompletion(context.Background(), params, true)
+	// if err != nil {
+	// 	fmt.Println(err)
+	// 	return
+	// }
+	// fmt.Println(time.Now().Sub(start))
 }

@@ -18,27 +18,42 @@ type Server struct {
 	URL         string
 	AccessToken string
 	Debug       bool
+	Trace       struct {
+		Enabled bool
+		Verbose bool
+	}
 }
 
 type LLMProvider interface {
 	Initialize(types.LLMSPSettings) error
-	GetCompletions(context.Context, types.CompletionParams) ([]lsp.CompletionItem, error)
+	GetCompletions(context.Context, types.CompletionParams) ([]types.CompletionItem, error)
 	GetCodeActions(lsp.DocumentURI, lsp.Range) []lsp.Command
 	ExecuteCommand(context.Context, lsp.Command, *jsonrpc2.Conn) error
 }
 
 func (s *Server) Handle() jsonrpc2.Handler {
 	return jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
+		if s.Trace.Enabled {
+			trace := types.LogTraceParams{
+				Message: req.Method,
+			}
+			if s.Trace.Verbose {
+				trace.Verbose = string(*req.Params)
+			}
+			go func() { conn.Notify(ctx, "$/logTrace", trace) }()
+		}
 		if !s.initialized && !(req.Method == "initialize" || req.Method == "workspace/didChangeConfiguration" || req.Method == "textDocument/didChange" || req.Method == "textDocument/didOpen") {
 			conn.Notify(ctx, "window/logMessage", lsp.LogMessageParams{Type: lsp.MTWarning, Message: "LLMSP not yet initialized"})
 			return nil, nil
 		}
+
 		switch req.Method {
 		case "initialize":
 			var params lsp.InitializeParams
 			if err := json.Unmarshal(*req.Params, &params); err != nil {
 				return nil, err
 			}
+
 			provider := &providers.SourcegraphLLM{
 				FileMap: s.FileMap,
 			}
@@ -47,6 +62,14 @@ func (s *Server) Handle() jsonrpc2.Handler {
 				provider.AccessToken = s.AccessToken
 			}
 			s.Provider = provider
+			if params.Trace == "messages" {
+				s.Trace.Enabled = true
+			} else if params.Trace == "verbose" {
+				s.Trace.Enabled = true
+				s.Trace.Verbose = true
+			} else {
+				s.Trace.Enabled = false
+			}
 			s.initialized = true
 
 			opts := lsp.TextDocumentSyncOptionsOrKind{
