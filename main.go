@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"os"
 
 	"github.com/pjlast/llmsp/lsp"
@@ -27,8 +28,16 @@ func (stdrwc) Close() error {
 }
 
 func main() {
+	url := *flag.String("url", "", "LLM provider URL")
+	token := *flag.String("token", "", "LLM provider token")
+	debug := *flag.Bool("debug", false, "Debug mode")
+	flag.Parse()
+
 	llmsp := &lsp.Server{
-		FileMap: make(types.MemoryFileMap),
+		FileMap:     make(types.MemoryFileMap),
+		URL:         url,
+		AccessToken: token,
+		Debug:       debug,
 	}
 	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), jsonrpc2.AsyncHandler(llmsp.Handle())).DisconnectNotify()
 }

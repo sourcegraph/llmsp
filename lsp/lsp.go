@@ -3,7 +3,9 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/pjlast/llmsp/providers"
 	"github.com/pjlast/llmsp/types"
 	"github.com/sourcegraph/go-lsp"
@@ -14,6 +16,9 @@ type Server struct {
 	initialized bool
 	Provider    LLMProvider
 	FileMap     types.MemoryFileMap
+	URL         string
+	AccessToken string
+	Debug       bool
 }
 
 type LLMProvider interface {
@@ -38,7 +43,12 @@ func (s *Server) Handle() jsonrpc2.Handler {
 			provider := &providers.SourcegraphLLM{
 				FileMap: s.FileMap,
 			}
+			if s.URL != "" && s.AccessToken != "" {
+				provider.URL = s.URL
+				provider.AccessToken = s.AccessToken
+			}
 			s.Provider = provider
+			s.initialized = true
 
 			opts := lsp.TextDocumentSyncOptionsOrKind{
 				Options: &lsp.TextDocumentSyncOptions{
@@ -95,6 +105,26 @@ func (s *Server) Handle() jsonrpc2.Handler {
 			return s.Provider.GetCodeActions(params.TextDocument.URI, params.Range), nil
 
 		case "textDocument/completion":
+			uuid := uuid.New().String()
+			var res any
+			conn.Call(ctx, "window/workDoneProgress/create", types.WorkDoneProgressCreateParams{
+				Token: uuid,
+			}, &res)
+			conn.Notify(ctx, "$/progress", types.ProgressParams[types.WorkDoneProgressBegin]{
+				Token: uuid,
+				Value: types.WorkDoneProgressBegin{
+					Title:   "Completion",
+					Kind:    "begin",
+					Message: "Fetching completion...",
+				},
+			})
+			defer conn.Notify(ctx, "$/progress", types.ProgressParams[types.WorkDoneProgressEnd]{
+				Token: uuid,
+				Value: types.WorkDoneProgressEnd{
+					Message: "Completion fetched",
+					Kind:    "end",
+				},
+			})
 			var params types.CompletionParams
 			if err := json.Unmarshal(*req.Params, &params); err != nil {
 				return nil, err
@@ -106,7 +136,7 @@ func (s *Server) Handle() jsonrpc2.Handler {
 			}
 
 			return types.CompletionList{
-				IsIncomplete: false,
+				IsIncomplete: true,
 				Items:        completions,
 			}, nil
 
@@ -128,6 +158,26 @@ func (s *Server) Handle() jsonrpc2.Handler {
 			return nil, nil
 
 		case "workspace/executeCommand":
+			uuid := uuid.New().String()
+			var res any
+			conn.Call(ctx, "window/workDoneProgress/create", types.WorkDoneProgressCreateParams{
+				Token: uuid,
+			}, &res)
+			conn.Notify(ctx, "$/progress", types.ProgressParams[types.WorkDoneProgressBegin]{
+				Token: uuid,
+				Value: types.WorkDoneProgressBegin{
+					Title:   "Code actions",
+					Kind:    "begin",
+					Message: "Computing code actions...",
+				},
+			})
+			defer conn.Notify(ctx, "$/progress", types.ProgressParams[types.WorkDoneProgressEnd]{
+				Token: uuid,
+				Value: types.WorkDoneProgressEnd{
+					Message: "Code actions computed",
+					Kind:    "end",
+				},
+			})
 			var command lsp.Command
 			if err := json.Unmarshal(*req.Params, &command); err != nil {
 				return nil, err

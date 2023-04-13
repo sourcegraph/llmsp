@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +38,69 @@ func getGitURL() string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func commentPrefix(language string) string {
+	switch language {
+	case "Go":
+		return "//"
+	case "Python":
+		return "#"
+	case "JavaScript":
+		return "//"
+	case "TypeScript":
+		return "//"
+	case "TypeScript React":
+		return "//"
+	case "Java":
+		return "//"
+	case "C":
+		return "//"
+	case "C++":
+		return "//"
+	case "Lua":
+		return "--"
+	case "Ruby":
+		return "#"
+	case "PHP":
+		return "#"
+	case "C#":
+		return "//"
+	default:
+		return ""
+	}
+}
+
+func determineLanguage(filename string) string {
+	ext := filepath.Ext(filename)
+	switch ext {
+	case ".go":
+		return "Go"
+	case ".py":
+		return "Python"
+	case ".js":
+		return "JavaScript"
+	case ".ts":
+		return "TypeScript"
+	case ".tsx":
+		return "TypeScript React"
+	case ".java":
+		return "Java"
+	case ".c":
+		return "C"
+	case ".cpp":
+		return "C++"
+	case ".lua":
+		return "Lua"
+	case ".rb":
+		return "Ruby"
+	case ".php":
+		return "PHP"
+	case ".cs":
+		return "C#"
+	default:
+		return "Unknown"
+	}
 }
 
 func truncateText(text string, maxTokens int) string {
@@ -113,7 +177,7 @@ func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.Comple
 	if l.RepoID != "" {
 		embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, snippet, 8, 0)
 	}
-	claudeParams := claude.DefaultCompletionParameters(l.getMessages(embeddings))
+	claudeParams := claude.DefaultCompletionParameters(l.getMessages(string(params.TextDocument.URI), embeddings))
 	claudeParams.Messages = append(claudeParams.Messages,
 		claude.Message{
 			Speaker: "human",
@@ -126,10 +190,10 @@ func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.Comple
 		},
 		claude.Message{
 			Speaker: "human",
-			Text: fmt.Sprintf(`Here is some Go code I am busy typing:
+			Text: fmt.Sprintf(`Here is some %s code I am busy typing:
 %s
 
-Given the file we are in, what is the most logical next block of code? Provide only the block of code, nothing else.`, snippet),
+Given the file we are in, what is the most logical next block of code? Provide only the block of code, nothing else.`, determineLanguage(string(params.TextDocument.URI)), snippet),
 		},
 		claude.Message{
 			Speaker: "assistant",
@@ -165,6 +229,7 @@ Given the file we are in, what is the most logical next block of code? Provide o
 }
 
 func (l *SourcegraphLLM) GetCodeActions(doc lsp.DocumentURI, selection lsp.Range) []lsp.Command {
+	cp := commentPrefix(determineLanguage(string(doc)))
 	commands := []lsp.Command{
 		{
 			Title:     "Provide suggestions",
@@ -177,14 +242,14 @@ func (l *SourcegraphLLM) GetCodeActions(doc lsp.DocumentURI, selection lsp.Range
 			Arguments: []interface{}{doc, selection.Start.Line, selection.End.Line},
 		},
 	}
-	if strings.Contains(strings.Join(strings.Split(l.FileMap[doc], "\n")[selection.Start.Line:selection.End.Line+1], "\n"), "// TODO") {
+	if strings.Contains(strings.Join(strings.Split(l.FileMap[doc], "\n")[selection.Start.Line:selection.End.Line+1], "\n"), fmt.Sprintf("%s TODO", cp)) {
 		commands = append(commands, lsp.Command{
 			Title:     "Implement TODOs",
 			Command:   "todos",
 			Arguments: []interface{}{doc, selection.Start.Line, selection.End.Line},
 		})
 	}
-	if strings.Contains(strings.Join(strings.Split(l.FileMap[doc], "\n")[selection.Start.Line:selection.End.Line+1], "\n"), "// ASK") {
+	if strings.Contains(strings.Join(strings.Split(l.FileMap[doc], "\n")[selection.Start.Line:selection.End.Line+1], "\n"), fmt.Sprintf("%s ASK", cp)) {
 		commands = append(commands, lsp.Command{
 			Title:     "Answer question",
 			Command:   "answer",
@@ -209,7 +274,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		startLine := int(cmd.Arguments[1].(float64))
 		endLine := int(cmd.Arguments[2].(float64))
 		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
-		docstring := l.getDocString(funcSnippet)
+		docstring := l.getDocString(string(filename), funcSnippet)
 
 		edits := []lsp.TextEdit{
 			{
@@ -252,7 +317,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		startLine := int(cmd.Arguments[1].(float64))
 		endLine := int(cmd.Arguments[2].(float64))
 		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
-		implemented := l.implementTODOs(l.FileMap[filename], funcSnippet)
+		implemented := l.implementTODOs(string(filename), l.FileMap[filename], funcSnippet)
 
 		edits := []lsp.TextEdit{
 			{
@@ -294,7 +359,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		startLine := int(cmd.Arguments[1].(float64))
 		endLine := int(cmd.Arguments[2].(float64))
 		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
-		implemented := l.answerQuestions(l.FileMap[filename], funcSnippet)
+		implemented := l.answerQuestions(string(filename), l.FileMap[filename], funcSnippet)
 
 		edits := []lsp.TextEdit{
 			{
@@ -308,7 +373,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 						Character: len(strings.Split(l.FileMap[filename], "\n")[endLine]),
 					},
 				},
-				NewText: "\n" + implemented,
+				NewText: implemented,
 			},
 		}
 
@@ -334,8 +399,8 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 	return nil
 }
 
-func (l *SourcegraphLLM) implementTODOs(filecontents, function string) string {
-	params := claude.DefaultCompletionParameters(l.getMessages(nil))
+func (l *SourcegraphLLM) implementTODOs(filename, filecontents, function string) string {
+	params := claude.DefaultCompletionParameters(l.getMessages(filename, nil))
 	params.Messages = append(params.Messages,
 		claude.Message{
 			Speaker: "human",
@@ -348,13 +413,13 @@ func (l *SourcegraphLLM) implementTODOs(filecontents, function string) string {
 		},
 		claude.Message{
 			Speaker: "human",
-			Text: fmt.Sprintf(`The following Go code contains TODO instructions. Produce code that will implement the TODO. Don't say anything else.
+			Text: fmt.Sprintf(`The following %s code contains TODO instructions. Produce code that will implement the TODO. Don't say anything else.
 Here is the code snippet:
-%s`, function),
+%s`, determineLanguage(filename), function),
 		},
 		claude.Message{
 			Speaker: "assistant",
-			Text:    "```go",
+			Text:    fmt.Sprintf("```%s", strings.ToLower(determineLanguage(filename))),
 		})
 	retChan, err := l.ClaudeClient.GetCompletion(context.Background(), params, true)
 	if err != nil {
@@ -364,17 +429,18 @@ Here is the code snippet:
 	for resp := range retChan {
 		implemented = resp
 	}
-	return strings.TrimSuffix(strings.TrimPrefix(implemented, "```go\n"), "\n```")
+	return strings.TrimSuffix(strings.TrimPrefix(implemented, fmt.Sprintf("```%s\n", strings.ToLower(determineLanguage(filename)))), "\n```")
 }
 
-func (l *SourcegraphLLM) answerQuestions(filecontents, question string) string {
-	question = strings.TrimPrefix(strings.TrimSpace(question), "// ASK: ")
+func (l *SourcegraphLLM) answerQuestions(filename, filecontents, question string) string {
+	cp := commentPrefix(determineLanguage(filename))
+	question = strings.TrimPrefix(strings.TrimSpace(question), fmt.Sprintf("%s ASK: ", cp))
 	var embeddings *embeddings.EmbeddingsSearchResult = nil
 	var err error
 	if l.RepoID != "" {
 		embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, question, 8, 2)
 	}
-	params := claude.DefaultCompletionParameters(l.getMessages(embeddings))
+	params := claude.DefaultCompletionParameters(l.getMessages(filename, embeddings))
 	params.Messages = append(params.Messages,
 		claude.Message{
 			Speaker: "human",
@@ -387,13 +453,13 @@ func (l *SourcegraphLLM) answerQuestions(filecontents, question string) string {
 		},
 		claude.Message{
 			Speaker: "human",
-			Text: fmt.Sprintf(`Answer this question. Prepend each line with `+"`//`"+` since you are in a code editor.
+			Text: fmt.Sprintf(`Answer this question. Prepend each line with `+fmt.Sprintf("`%s`", cp)+` since you are in a code editor.
 
 %s`, question),
 		},
 		claude.Message{
 			Speaker: "assistant",
-			Text:    "// ANSWER: ",
+			Text:    cp + " ANSWER: ",
 		})
 	retChan, err := l.ClaudeClient.GetCompletion(context.Background(), params, true)
 	if err != nil {
@@ -403,7 +469,7 @@ func (l *SourcegraphLLM) answerQuestions(filecontents, question string) string {
 	for resp := range retChan {
 		answer = resp
 	}
-	return "// ASK: " + question + "\n" + answer
+	return cp + " ASK: " + question + "\n" + answer
 }
 
 // sendDiagnostics sends the provided diagnostics back over the provided connection.
@@ -417,7 +483,7 @@ func (l *SourcegraphLLM) sendDiagnostics(ctx context.Context, conn jsonrpc2.JSON
 		embeddingResults, _ = l.EmbeddingsClient.GetEmbeddings(repoID, snippet, 8, 0)
 	}
 
-	params := claude.DefaultCompletionParameters(l.getMessages(embeddingResults))
+	params := claude.DefaultCompletionParameters(l.getMessages(filename, embeddingResults))
 	params.Messages = append(params.Messages, getSuggestionMessages(strings.TrimPrefix(filename, "file://"), snippet)...)
 
 	retChan, err := l.ClaudeClient.GetCompletion(ctx, params, true)
@@ -477,18 +543,19 @@ func (l *SourcegraphLLM) sendDiagnostics(ctx context.Context, conn jsonrpc2.JSON
 	return nil
 }
 
-func (l *SourcegraphLLM) getDocString(function string) string {
-	params := claude.DefaultCompletionParameters(l.getMessages(nil))
+func (l *SourcegraphLLM) getDocString(filename, function string) string {
+	cp := commentPrefix(determineLanguage(filename))
+	params := claude.DefaultCompletionParameters(l.getMessages(filename, nil))
 	params.Messages = append(params.Messages, claude.Message{
 		Speaker: "human",
-		Text: fmt.Sprintf(`Generate a doc string explaining the use of the following Go function:
+		Text: fmt.Sprintf(`Generate a doc string explaining the use of the following %s function:
 %s
 
-Don't include the function in your output.`, function),
+Don't include the function in your output.`, determineLanguage(filename), function),
 	},
 		claude.Message{
 			Speaker: "assistant",
-			Text:    "//",
+			Text:    cp,
 		})
 	retChan, err := l.ClaudeClient.GetCompletion(context.Background(), params, true)
 	if err != nil {
@@ -530,12 +597,11 @@ Line {number}: {suggestion}`, filename, content),
 	}
 }
 
-func (l *SourcegraphLLM) getMessages(embeddingResults *embeddings.EmbeddingsSearchResult) []claude.Message {
-	codyMessage := `I am Cody, an AI-powered coding assistant developed by Sourcegraph. I operate inside a Language Server Protocol implementation. My task is to help programmers with programming tasks in the Go programming language.
-I am an expert in the Go programming language.
+func (l *SourcegraphLLM) getMessages(filename string, embeddingResults *embeddings.EmbeddingsSearchResult) []claude.Message {
+	codyMessage := fmt.Sprintf(`I am Cody, an AI-powered coding assistant developed by Sourcegraph. I operate inside a Language Server Protocol implementation. My task is to help programmers with programming tasks in the %s programming language.
 I have access to your currently open files in the editor.
 I will generate suggestions as concisely and clearly as possible.
-I only suggest something if I am certain about my answer.`
+I only suggest something if I am certain about my answer.`, determineLanguage(filename))
 	if l.RepoName != "" {
 		codyMessage += fmt.Sprintf("\nI have knowledge about the %s repository and can answer questions about it.", l.RepoName)
 	}

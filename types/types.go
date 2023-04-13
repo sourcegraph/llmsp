@@ -121,3 +121,18 @@ type CodeAction struct {
 	Command        lsp.Command        `json:"command,omitempty"`
 	Data           []any              `json:"data,omitempty"`
 }
+
+type WorkDoneProgressBegin struct {
+	Title   string `json:"title"`
+	Kind    string `json:"kind"`
+	Message string `json:"message"`
+}
+
+type WorkDoneProgressEnd struct {
+	Kind    string `json:"kind"`
+	Message string `json:"message"`
+}
+
+type WorkDoneProgressCreateParams struct {
+	Token string `json:"token"`
+}
