@@ -31,6 +31,7 @@ func main() {
 	url := *flag.String("url", "", "LLM provider URL")
 	token := *flag.String("token", "", "LLM provider token")
 	debug := *flag.Bool("debug", false, "Debug mode")
+	_ = *flag.Bool("stdio", true, "Stdio mode")
 	flag.Parse()
 
 	llmsp := &lsp.Server{
