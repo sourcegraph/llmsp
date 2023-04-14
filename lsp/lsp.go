@@ -137,12 +137,26 @@ func (s *Server) Handle() jsonrpc2.Handler {
 			return nil, nil
 
 		case "textDocument/codeAction":
-			var params lsp.CodeActionParams
+			var params types.CodeActionParams
 			if err := json.Unmarshal(*req.Params, &params); err != nil {
 				return nil, err
 			}
 
-			return s.Provider.GetCodeActions(params.TextDocument.URI, params.Range), nil
+			commands := s.Provider.GetCodeActions(params.TextDocument.URI, params.Range)
+			if len(params.Context.Only) > 0 {
+				filteredCommands := []lsp.Command{}
+				for _, command := range commands {
+					for _, filteredCommand := range params.Context.Only {
+						if filteredCommand == command.Command {
+							filteredCommands = append(filteredCommands, command)
+							break
+						}
+					}
+				}
+
+				return filteredCommands, nil
+			}
+			return commands, nil
 
 		case "textDocument/completion":
 			uuid := uuid.New().String()

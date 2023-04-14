@@ -150,3 +150,14 @@ type LogTraceParams struct {
 	Message string `json:"message"`
 	Verbose string `json:"verbose,omitempty"`
 }
+
+type CodeActionContext struct {
+	Diagnostics []lsp.Diagnostic `json:"diagnostics"`
+	Only        []string         `json:"only,omitempty"`
+}
+
+type CodeActionParams struct {
+	TextDocument lsp.TextDocumentIdentifier `json:"textDocument"`
+	Range        lsp.Range                  `json:"range"`
+	Context      CodeActionContext          `json:"context"`
+}
