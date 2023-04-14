@@ -3,6 +3,7 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
@@ -34,7 +35,22 @@ type LLMProvider interface {
 }
 
 func (s *Server) Handle() jsonrpc2.Handler {
+	if s.URL != "" && s.AccessToken != "" {
+		provider := &providers.SourcegraphLLM{
+			FileMap: s.FileMap,
+		}
+		settings := types.LLMSPSettings{
+			Sourcegraph: &types.SourcegraphSettings{
+				URL:         s.URL,
+				AccessToken: s.AccessToken,
+			},
+		}
+		provider.Initialize(settings)
+		s.Provider = provider
+		s.initialized = true
+	}
 	return jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
+		conn.Notify(ctx, "window/logMessage", lsp.LogMessageParams{Type: lsp.MTError, Message: fmt.Sprintf("%s: %s", req.Method, string(*req.Params))})
 		if s.Trace.Enabled {
 			trace := types.LogTraceParams{
 				Message: req.Method,
@@ -56,23 +72,25 @@ func (s *Server) Handle() jsonrpc2.Handler {
 				return nil, err
 			}
 
-			provider := &providers.SourcegraphLLM{
-				FileMap: s.FileMap,
+			if !s.initialized {
+				provider := &providers.SourcegraphLLM{
+					FileMap: s.FileMap,
+				}
+				if s.URL != "" && s.AccessToken != "" {
+					provider.URL = s.URL
+					provider.AccessToken = s.AccessToken
+				}
+				s.Provider = provider
+				if params.Trace == "messages" {
+					s.Trace.Enabled = true
+				} else if params.Trace == "verbose" {
+					s.Trace.Enabled = true
+					s.Trace.Verbose = true
+				} else {
+					s.Trace.Enabled = false
+				}
+				s.initialized = true
 			}
-			if s.URL != "" && s.AccessToken != "" {
-				provider.URL = s.URL
-				provider.AccessToken = s.AccessToken
-			}
-			s.Provider = provider
-			if params.Trace == "messages" {
-				s.Trace.Enabled = true
-			} else if params.Trace == "verbose" {
-				s.Trace.Enabled = true
-				s.Trace.Verbose = true
-			} else {
-				s.Trace.Enabled = false
-			}
-			s.initialized = true
 
 			opts := lsp.TextDocumentSyncOptionsOrKind{
 				Options: &lsp.TextDocumentSyncOptions{
@@ -171,14 +189,17 @@ func (s *Server) Handle() jsonrpc2.Handler {
 			if err := json.Unmarshal(*req.Params, &params); err != nil {
 				return nil, err
 			}
-			provider := &providers.SourcegraphLLM{
-				FileMap: s.FileMap,
+			if !s.initialized {
+
+				provider := &providers.SourcegraphLLM{
+					FileMap: s.FileMap,
+				}
+				if err := provider.Initialize(params.Settings.LLMSP); err != nil {
+					return nil, err
+				}
+				s.Provider = provider
+				s.initialized = true
 			}
-			if err := provider.Initialize(params.Settings.LLMSP); err != nil {
-				return nil, err
-			}
-			s.Provider = provider
-			s.initialized = true
 			conn.Notify(ctx, "window/logMessage", lsp.LogMessageParams{Type: lsp.MTWarning, Message: "LLMSP initialized!"})
 
 			return nil, nil

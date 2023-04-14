@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 
 	"github.com/pjlast/llmsp/lsp"
@@ -28,11 +29,15 @@ func (stdrwc) Close() error {
 }
 
 func main() {
-	url := *flag.String("url", "", "LLM provider URL")
-	token := *flag.String("token", "", "LLM provider token")
+	var url string
+	var token string
+	flag.StringVar(&url, "url", "", "LLM provider URL")
+	flag.StringVar(&token, "token", "", "LLM provider token")
 	debug := *flag.Bool("debug", false, "Debug mode")
 	_ = *flag.Bool("stdio", true, "Stdio mode")
 	flag.Parse()
+
+	fmt.Println(url)
 
 	llmsp := &lsp.Server{
 		FileMap:     make(types.MemoryFileMap),
