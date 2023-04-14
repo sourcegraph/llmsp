@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"os"
 
 	"github.com/pjlast/llmsp/lsp"
@@ -36,8 +35,6 @@ func main() {
 	debug := *flag.Bool("debug", false, "Debug mode")
 	_ = *flag.Bool("stdio", true, "Stdio mode")
 	flag.Parse()
-
-	fmt.Println(url)
 
 	llmsp := &lsp.Server{
 		FileMap:     make(types.MemoryFileMap),
