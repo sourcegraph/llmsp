@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 
 	"github.com/pjlast/llmsp/lsp"
-	"github.com/pjlast/llmsp/types"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -27,20 +27,52 @@ func (stdrwc) Close() error {
 	return os.Stdout.Close()
 }
 
+const (
+	urlFlag  = "url"
+	urlUsage = "LLM provider URL"
+
+	tokenFlag  = "token"
+	tokenUsage = "LLM provider token"
+
+	debugFlag  = "debug"
+	debugUsage = "Debug mode"
+
+	stdioFlag  = "stdio"
+	stdioUsage = "Stdio mode"
+
+	autoCompleteFlag  = "auto-complete"
+	autoCompleteUsage = "Enable auto-completion (off, init, always)"
+)
+
 func main() {
-	var url string
-	var token string
-	flag.StringVar(&url, "url", "", "LLM provider URL")
-	flag.StringVar(&token, "token", "", "LLM provider token")
-	debug := *flag.Bool("debug", false, "Debug mode")
-	_ = *flag.Bool("stdio", true, "Stdio mode")
+	var (
+		url   string
+		token string
+		// debug        bool
+		autoComplete string
+	)
+
+	flag.StringVar(&url, urlFlag, "", urlUsage)
+	flag.StringVar(&token, tokenFlag, "", tokenUsage)
+	// debug = *flag.Bool(debugFlag, false, debugUsage)
+	flag.StringVar(&autoComplete, autoCompleteFlag, "", autoCompleteUsage)
+	_ = *flag.Bool(stdioFlag, true, stdioUsage) // Some editors pass it so we need to not error on it
 	flag.Parse()
 
-	llmsp := &lsp.Server{
-		FileMap:     make(types.MemoryFileMap),
-		URL:         url,
-		AccessToken: token,
-		Debug:       debug,
+	if autoComplete == "" {
+		autoComplete = "off"
 	}
-	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), jsonrpc2.AsyncHandler(llmsp.Handle())).DisconnectNotify()
+
+	switch autoComplete {
+	case "off", "init", "always":
+		// valid
+	default:
+		fmt.Println("Invalid autoComplete value. Must be 'off', 'init' or 'always'")
+		os.Exit(1)
+	}
+
+	server := lsp.NewServer(url, token)
+	// server.AutoComplete = autoComplete
+
+	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), jsonrpc2.AsyncHandler(server.Router)).DisconnectNotify()
 }

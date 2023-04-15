@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/pjlast/llmsp/claude"
 )
@@ -24,8 +23,24 @@ I only suggest something if I am certain about my answer.`,
 		},
 		{
 			Speaker: "HUMAN",
-			Text: `Suggest a code snippet to complete the following code. Continue from where I left off.:
-func isPrim`,
+			Text: `Here are the contents of the file I'm working in. My cursor is on line 5.
+
+` + "```go" + `
+1. package main
+2.
+3. func main() {
+4.   messages := []string{"First", "Second", "Third"}
+5.   i
+6. }
+` + "```",
+		},
+		{
+			Speaker: "ASSISTANT",
+			Text:    "Ok.",
+		},
+		{
+			Speaker: "HUMAN",
+			Text:    `Suggest Go code to complete the code. Continue from where I left off. Return only code.`,
 		},
 		{
 			Speaker: "ASSISTANT",
@@ -35,17 +50,10 @@ func isPrim`,
 
 	params := claude.DefaultCompletionParameters(messages)
 
-	start := time.Now()
-	retChan, _ := cli.StreamCompletion(context.Background(), params, true)
-	for range retChan {
+	completion, err := cli.GetCompletion(context.Background(), params, true)
+	if err != nil {
+		fmt.Println(err)
+		return
 	}
-	fmt.Println(time.Now().Sub(start))
-
-	// start := time.Now()
-	// _, err := cli.GetCompletion(context.Background(), params, true)
-	// if err != nil {
-	// 	fmt.Println(err)
-	// 	return
-	// }
-	// fmt.Println(time.Now().Sub(start))
+	fmt.Println(completion)
 }

@@ -8,6 +8,14 @@ This repo specifically interacts with Sourcegraph's endpionts to do two things:
 
 This logic is lifted from the Cody VS Code extension.
 
+## TODO
+
+- [ ] Stabelize the API
+- [ ] Versioned releases
+- [ ] Code cleanup
+- [ ] README updates for editor suggestions
+- [ ] Experiment with an LSP Proxy to get rich information from existing LSPs
+
 ## How to use it
 
 You'll need a Cody-enabled Sourcegraph server URL as well as a Sourcegraph Access Token.
