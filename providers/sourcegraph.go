@@ -289,7 +289,7 @@ func (l *SourcegraphLLM) GetCodeActions(doc lsp.DocumentURI, selection lsp.Range
 	return commands
 }
 
-func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, conn *jsonrpc2.Conn) error {
+func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, conn *jsonrpc2.Conn) (*json.RawMessage, error) {
 	switch cmd.Command {
 	case "suggest":
 		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
@@ -297,7 +297,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		endLine := cmd.Arguments[2].(float64)
 		snippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
 		snippet = numberLines(snippet, int(startLine))
-		return l.sendDiagnostics(ctx, conn, string(filename), snippet)
+		return nil, l.sendDiagnostics(ctx, conn, string(filename), snippet)
 
 	case "docstring":
 		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
@@ -340,7 +340,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 
 		var res json.RawMessage
 		go func() { conn.Call(ctx, "workspace/applyEdit", editParams, &res) }()
-		return nil
+		return nil, nil
 
 	case "todos":
 		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
@@ -434,6 +434,47 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		var res json.RawMessage
 		conn.Call(ctx, "workspace/applyEdit", editParams, &res)
 
+	case "cody.explain":
+		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
+		startLine := int(cmd.Arguments[1].(float64))
+		endLine := int(cmd.Arguments[2].(float64))
+		instruction := cmd.Arguments[3].(string)
+
+		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
+		implemented := l.codyDo(string(filename), l.FileMap[filename], funcSnippet, instruction, false)
+
+		maxWidth := 80
+		lines := strings.Split(implemented, "\n")
+		var splitLines []string
+		for _, line := range lines {
+			words := strings.Split(strings.TrimSpace(line), " ")
+			var lineWords []string
+			lineLen := 0
+			for _, word := range words {
+				if lineLen+len(word)+1 < maxWidth {
+					lineWords = append(lineWords, word)
+					lineLen += len(word) + 1
+				} else {
+					splitLines = append(splitLines, strings.Join(lineWords, " "))
+					lineWords = []string{word}
+					lineLen = len(word)
+				}
+			}
+			if len(lineWords) > 0 {
+				splitLines = append(splitLines, strings.Join(lineWords, " "))
+			}
+		}
+
+		resp := struct {
+			Message []string `json:"message"`
+		}{
+			Message: splitLines,
+		}
+		mars, _ := json.Marshal(resp)
+		msJson := json.RawMessage(mars)
+
+		return &msJson, nil
+
 	case "answer":
 		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
 		startLine := int(cmd.Arguments[1].(float64))
@@ -476,7 +517,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		var res json.RawMessage
 		conn.Call(ctx, "workspace/applyEdit", editParams, &res)
 	}
-	return nil
+	return nil, nil
 }
 
 func (l *SourcegraphLLM) codyDo(filename, filecontents, function, instruction string, codeOnly bool) string {

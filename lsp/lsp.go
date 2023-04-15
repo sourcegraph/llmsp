@@ -13,13 +13,14 @@ import (
 )
 
 type Server struct {
-	initialized bool
-	Provider    LLMProvider
-	FileMap     types.MemoryFileMap
-	URL         string
-	AccessToken string
-	Debug       bool
-	Trace       struct {
+	initialized  bool
+	Provider     LLMProvider
+	FileMap      types.MemoryFileMap
+	URL          string
+	AccessToken  string
+	AutoComplete bool
+	Debug        bool
+	Trace        struct {
 		Enabled bool
 		Verbose bool
 	}
@@ -30,7 +31,7 @@ type LLMProvider interface {
 	Initialize(types.LLMSPSettings) error
 	GetCompletions(context.Context, types.CompletionParams) ([]types.CompletionItem, error)
 	GetCodeActions(lsp.DocumentURI, lsp.Range) []lsp.Command
-	ExecuteCommand(context.Context, lsp.Command, *jsonrpc2.Conn) error
+	ExecuteCommand(context.Context, lsp.Command, *jsonrpc2.Conn) (*json.RawMessage, error)
 }
 
 func (s *Server) Handle() jsonrpc2.Handler {
@@ -40,8 +41,9 @@ func (s *Server) Handle() jsonrpc2.Handler {
 		}
 		settings := types.LLMSPSettings{
 			Sourcegraph: &types.SourcegraphSettings{
-				URL:         s.URL,
-				AccessToken: s.AccessToken,
+				URL:          s.URL,
+				AccessToken:  s.AccessToken,
+				AutoComplete: "off",
 			},
 		}
 		provider.Initialize(settings)
@@ -99,7 +101,7 @@ func (s *Server) Handle() jsonrpc2.Handler {
 				WorkDoneProgress: true,
 			}
 			ecopts := lsp.ExecuteCommandOptions{
-				Commands: []string{"todos", "suggest", "answer", "docstring", "cody"},
+				Commands: []string{"todos", "suggest", "answer", "docstring", "cody", "cody.explain"},
 			}
 
 			return types.InitializeResult{
@@ -159,6 +161,9 @@ func (s *Server) Handle() jsonrpc2.Handler {
 			return commands, nil
 
 		case "textDocument/completion":
+			if !s.AutoComplete {
+				return nil, nil
+			}
 			uuid := uuid.New().String()
 			var res any
 			conn.Call(ctx, "window/workDoneProgress/create", types.WorkDoneProgressCreateParams{
@@ -240,9 +245,9 @@ func (s *Server) Handle() jsonrpc2.Handler {
 				return nil, err
 			}
 
-			s.Provider.ExecuteCommand(ctx, command, conn)
+			return s.Provider.ExecuteCommand(ctx, command, conn)
 
-			return nil, nil
+			// return nil, nil
 		}
 		return nil, nil
 	})

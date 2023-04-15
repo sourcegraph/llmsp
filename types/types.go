@@ -11,6 +11,7 @@ type LLMSPSettings struct {
 type SourcegraphSettings struct {
 	URL            string   `json:"url"`
 	AccessToken    string   `json:"accessToken"`
+  AutoComplete   string   `json:"autoComplete"`
 	RepoEmbeddings []string `json:"repos"`
 }
 
