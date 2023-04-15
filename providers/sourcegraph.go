@@ -444,10 +444,10 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		implemented := l.codyDo(string(filename), l.FileMap[filename], funcSnippet, instruction, false)
 
 		maxWidth := 80
-		lines := strings.Split(implemented, "\n")
+		lines := strings.Split(strings.TrimSpace(implemented), "\n")
 		var splitLines []string
 		for _, line := range lines {
-			words := strings.Split(strings.TrimSpace(line), " ")
+			words := strings.Split(line, " ")
 			var lineWords []string
 			lineLen := 0
 			for _, word := range words {
