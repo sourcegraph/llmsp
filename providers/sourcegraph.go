@@ -212,10 +212,8 @@ func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.Comple
 	claudeParams.Messages = append(claudeParams.Messages,
 		claude.Message{
 			Speaker: claude.Human,
-			Text: fmt.Sprintf(`Here are the contents of the I'm working in. My cursor is on line %d:
-`+"```%s"+`
-%s
-`+"```", params.Position.Line+1, determineLanguage(string(params.TextDocument.URI)), numberLines(truncateText(l.FileMap[params.TextDocument.URI], 1000), 1)),
+			Text: fmt.Sprintf(`Here are the contents of the file you are working in:
+%s`, truncateText(l.FileMap[params.TextDocument.URI], 1000)),
 		},
 		claude.Message{
 			Speaker: claude.Assistant,
@@ -223,7 +221,8 @@ func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.Comple
 		},
 		claude.Message{
 			Speaker: claude.Human,
-			Text:    fmt.Sprintf(`Suggest a %s code snippet to complete the code. Continue from where I left off. Return only code.`, determineLanguage(string(params.TextDocument.URI))),
+			Text: fmt.Sprintf(`Suggest a %s code snippet to complete the following code. Continue from where I left off:
+%s`, determineLanguage(string(params.TextDocument.URI)), snippet),
 		},
 		claude.Message{
 			Speaker: claude.Assistant,
@@ -234,7 +233,6 @@ func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.Comple
 		return nil, err
 	}
 	completion = completion[:strings.Index(completion, "\n```")]
-	completion = strings.TrimSpace(strings.Split(l.FileMap[params.TextDocument.URI], "\n")[params.Position.Line]) + completion
 	completionLines := strings.Split(completion, "\n")
 	for i, line := range completionLines {
 		completionLines[i] = indentation + line
