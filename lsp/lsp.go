@@ -40,12 +40,15 @@ type Server struct {
 	Router *Router
 }
 
+// NewServer creates a new Server instance.
+//
+// url is the base URL of the API server.
+// accessToken is the OAuth access token to use for requests.
 func NewServer(url, accessToken string) *Server {
 	s := &Server{
-		FileMap:      make(types.MemoryFileMap),
-		URL:          url,
-		AccessToken:  accessToken,
-		AutoComplete: "always",
+		FileMap:     make(types.MemoryFileMap),
+		URL:         url,
+		AccessToken: accessToken,
 	}
 	s.Router = NewRouter()
 	s.Router.Register("initialize", s.Initialize())
@@ -209,6 +212,9 @@ func (s *Server) WorkspaceDidChangeConfiguration() HandlerFunc {
 		var params types.DidChangeConfigurationParams
 		if err := json.Unmarshal(*req.Params, &params); err != nil {
 			return nil, err
+		}
+		if params.Settings.LLMSP.Sourcegraph.AutoComplete != "" {
+			s.AutoComplete = params.Settings.LLMSP.Sourcegraph.AutoComplete
 		}
 		if !s.initialized {
 

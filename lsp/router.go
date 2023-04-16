@@ -6,6 +6,10 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
+// HandlerFunc is a function type that handles a single JSON-RPC 2.0 request.
+//
+// The handler is passed the request context, a JSON-RPC connection, and the request object. The
+// handler can reply to the request by calling the Reply method on the connection.
 type HandlerFunc func(context.Context, *jsonrpc2.Conn, *jsonrpc2.Request)
 
 // Router handles JSON-RPC 2.0 requests and dispatches them to the appropriate handler.

@@ -439,9 +439,16 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		startLine := int(cmd.Arguments[1].(float64))
 		endLine := int(cmd.Arguments[2].(float64))
 		instruction := cmd.Arguments[3].(string)
+		var codeOnly bool
+		if len(cmd.Arguments) >= 5 {
+			codeOnly = cmd.Arguments[4].(bool)
+		}
 
 		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
-		implemented := l.codyDo(string(filename), l.FileMap[filename], funcSnippet, instruction, false)
+		implemented := l.codyDo(string(filename), l.FileMap[filename], funcSnippet, instruction, codeOnly)
+		if codeOnly {
+			implemented = fmt.Sprintf("```%s\n%s\n```", strings.ToLower(determineLanguage(string(filename))), implemented)
+		}
 
 		maxWidth := 80
 		lines := strings.Split(strings.TrimSpace(implemented), "\n")
