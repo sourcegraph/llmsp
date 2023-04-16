@@ -454,6 +454,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		lines := strings.Split(strings.TrimSpace(implemented), "\n")
 		var splitLines []string
 		for _, line := range lines {
+			line = strings.TrimRight(line, " ")
 			words := strings.Split(line, " ")
 			var lineWords []string
 			lineLen := 0
