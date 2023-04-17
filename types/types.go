@@ -11,7 +11,7 @@ type LLMSPSettings struct {
 type SourcegraphSettings struct {
 	URL            string   `json:"url"`
 	AccessToken    string   `json:"accessToken"`
-  AutoComplete   string   `json:"autoComplete"`
+	AutoComplete   string   `json:"autoComplete"`
 	RepoEmbeddings []string `json:"repos"`
 }
 
@@ -125,7 +125,7 @@ type ServerCapabilities struct {
 type CodeAction struct {
 	Title          string             `json:"title"`
 	Kind           lsp.CodeActionKind `json:"kind,omitempty"`
-	Diagnostics    []lsp.Diagnostic   `json:"diagnostics,omitempty"`
+	Diagnostics    []Diagnostic       `json:"diagnostics,omitempty"`
 	IsPrePreferred bool               `json:"isPreferred,omitempty"`
 	Edit           WorkspaceEdit      `json:"edit,omitempty"`
 	Command        lsp.Command        `json:"command,omitempty"`
@@ -152,9 +152,38 @@ type LogTraceParams struct {
 	Verbose string `json:"verbose,omitempty"`
 }
 
+type Diagnostic struct {
+	/**
+	 * The range at which the message applies.
+	 */
+	Range lsp.Range `json:"range"`
+
+	/**
+	 * The diagnostic's severity. Can be omitted. If omitted it is up to the
+	 * client to interpret diagnostics as error, warning, info or hint.
+	 */
+	Severity lsp.DiagnosticSeverity `json:"severity,omitempty"`
+
+	/**
+	 * The diagnostic's code. Can be omitted.
+	 */
+	Code int `json:"code,omitempty"`
+
+	/**
+	 * A human-readable string describing the source of this
+	 * diagnostic, e.g. 'typescript' or 'super lint'.
+	 */
+	Source string `json:"source,omitempty"`
+
+	/**
+	 * The diagnostic's message.
+	 */
+	Message string `json:"message"`
+}
+
 type CodeActionContext struct {
-	Diagnostics []lsp.Diagnostic `json:"diagnostics"`
-	Only        []string         `json:"only,omitempty"`
+	Diagnostics []Diagnostic `json:"diagnostics"`
+	Only        []string     `json:"only,omitempty"`
 }
 
 type CodeActionParams struct {

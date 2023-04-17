@@ -483,6 +483,37 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 
 		return &msJson, nil
 
+	case "cody.explainErrors":
+		lspErr := cmd.Arguments[0].(string)
+		message := []claude.Message{{
+			Speaker: claude.Human,
+			Text:    fmt.Sprintf("Explain the following error: %s", lspErr),
+		}, {
+			Speaker: claude.Assistant,
+			Text:    "",
+		}}
+		params := claude.DefaultCompletionParameters(message)
+		completion, err := l.ClaudeClient.GetCompletion(ctx, params, false)
+		if err != nil {
+			conn.Notify(ctx, "window/logMessage", lsp.LogMessageParams{Type: lsp.MTError, Message: fmt.Sprintf("%v", err)})
+			return nil, err
+		}
+
+		conn.Notify(ctx, "window/logMessage", lsp.LogMessageParams{Type: lsp.MTError, Message: completion})
+
+		resp := struct {
+			Answer string `json:"answer"`
+		}{
+			Answer: completion,
+		}
+		ms, err := json.Marshal(resp)
+		if err != nil {
+			return nil, err
+		}
+		msJson := json.RawMessage(ms)
+
+		return &msJson, nil
+
 	case "answer":
 		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
 		startLine := int(cmd.Arguments[1].(float64))
