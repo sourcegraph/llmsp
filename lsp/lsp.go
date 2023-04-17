@@ -142,6 +142,9 @@ func (s *Server) TextDocumentDidOpen() HandlerFunc {
 
 func (s *Server) TextDocumentCodeAction() HandlerFunc {
 	return jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
+		if !s.initialized {
+			return nil, nil
+		}
 		var params types.CodeActionParams
 		if err := json.Unmarshal(*req.Params, &params); err != nil {
 			return nil, err
@@ -167,6 +170,9 @@ func (s *Server) TextDocumentCodeAction() HandlerFunc {
 
 func (s *Server) TextDocumentCompletion() HandlerFunc {
 	return jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
+		if !s.initialized {
+			return nil, nil
+		}
 		if s.AutoComplete == "" || s.AutoComplete == "off" {
 			return nil, nil
 		}
@@ -235,6 +241,9 @@ func (s *Server) WorkspaceDidChangeConfiguration() HandlerFunc {
 
 func (s *Server) WorkspaceExecuteCommand() HandlerFunc {
 	return jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
+		if !s.initialized {
+			return nil, nil
+		}
 		uuid := uuid.New().String()
 		var res any
 		conn.Call(ctx, "window/workDoneProgress/create", types.WorkDoneProgressCreateParams{
