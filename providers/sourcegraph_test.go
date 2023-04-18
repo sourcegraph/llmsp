@@ -18,3 +18,35 @@ func TestGetRepoName(t *testing.T) {
 		}
 	}
 }
+
+func TestDetermineLanguage(t *testing.T) {
+	tests := []struct {
+		filename string
+		want     string
+	}{
+		{"./foo.go", "Go"},
+		{"./bar.py", "Python"},
+		{"./baz.js", "JavaScript"},
+		{"./qux.ts", "TypeScript"},
+		{"./quux.tsx", "TypeScript React"},
+		{"./corge.java", "Java"},
+		{"./grault.c", "C"},
+		{"./garply.cpp", "C++"},
+		{"./fred.lua", "Lua"},
+		{"./plugh.rb", "Ruby"},
+		{"./xyzzy.php", "PHP"},
+		{"./thud.cs", "C#"},
+		{"./foo.bar", "bar"},
+		{"./foo.baz", "baz"},
+		{"./foo.txt", "txt"},
+		{"./foo.md", "md"},
+	}
+
+	for _, test := range tests {
+		got := determineLanguage(test.filename)
+		if got != test.want {
+			t.Errorf("determineLanguage(%q) == %q, want %q", test.filename, got,
+				test.want)
+		}
+	}
+}

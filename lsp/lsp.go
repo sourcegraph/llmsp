@@ -99,7 +99,7 @@ func (s *Server) Initialize() HandlerFunc {
 			WorkDoneProgress: true,
 		}
 		ecopts := lsp.ExecuteCommandOptions{
-			Commands: []string{"todos", "suggest", "answer", "docstring", "cody", "cody.explain", "cody.explainErrors"},
+			Commands: []string{"todos", "suggest", "answer", "docstring", "cody", "cody.explain", "cody.explainErrors", "cody.remember"},
 		}
 
 		return types.InitializeResult{
@@ -151,7 +151,6 @@ func (s *Server) TextDocumentCodeAction() HandlerFunc {
 			return nil, err
 		}
 
-		conn.Notify(ctx, "window/logMessage", lsp.LogMessageParams{Type: lsp.MTError, Message: fmt.Sprintf("%v", params.Context.Diagnostics)})
 		commands := s.Provider.GetCodeActions(params.TextDocument.URI, params.Range)
 		for _, diagnostic := range params.Context.Diagnostics {
 			commands = append(commands, lsp.Command{

@@ -19,15 +19,16 @@ import (
 )
 
 type SourcegraphLLM struct {
-	FileMap          types.MemoryFileMap
-	EmbeddingsClient *embeddings.Client
-	ClaudeClient     *claude.Client
-	URL              string
-	AccessToken      string
-	RepoID           string
-	RepoName         string
-	Mu               sync.Mutex
-	Context          *struct {
+	FileMap           types.MemoryFileMap
+	EmbeddingsClient  *embeddings.Client
+	ClaudeClient      *claude.Client
+	URL               string
+	AccessToken       string
+	RepoID            string
+	RepoName          string
+	InteractionMemory []claude.Message
+	Mu                sync.Mutex
+	Context           *struct {
 		context.Context
 		CancelFunc context.CancelFunc
 	}
@@ -100,7 +101,7 @@ func determineLanguage(filename string) string {
 	case ".cs":
 		return "C#"
 	default:
-		return "Unknown"
+		return strings.TrimPrefix(ext, ".")
 	}
 }
 
@@ -129,6 +130,7 @@ func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
 	l.AccessToken = settings.Sourcegraph.AccessToken
 	l.EmbeddingsClient = embeddings.NewClient(l.URL, l.AccessToken, nil)
 	l.ClaudeClient = claude.NewClient(l.URL, l.AccessToken, nil)
+	l.InteractionMemory = make([]claude.Message, 0)
 
 	gitURL := getGitURL()
 	if gitURL != "" {
@@ -269,6 +271,11 @@ func (l *SourcegraphLLM) GetCodeActions(doc lsp.DocumentURI, selection lsp.Range
 		{
 			Title:     "Generate docstring",
 			Command:   "docstring",
+			Arguments: []interface{}{doc, selection.Start.Line, selection.End.Line},
+		},
+		{
+			Title:     "Cody: Remember this",
+			Command:   "cody.remember",
 			Arguments: []interface{}{doc, selection.Start.Line, selection.End.Line},
 		},
 	}
@@ -483,6 +490,26 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 
 		return &msJson, nil
 
+	case "cody.remember":
+		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
+		startLine := int(cmd.Arguments[1].(float64))
+		endLine := int(cmd.Arguments[2].(float64))
+
+		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
+
+		l.InteractionMemory = append(l.InteractionMemory, claude.Message{
+			Speaker: claude.Human,
+			Text: fmt.Sprintf(`Here is a snippet from the file "%s":
+`+"```%s"+`
+%s
+`+"```", strings.TrimPrefix(string(filename), "file://"), strings.ToLower(determineLanguage(string(filename))), funcSnippet),
+		}, claude.Message{
+			Speaker: claude.Assistant,
+			Text:    "Ok.",
+		})
+
+		return nil, nil
+
 	case "cody.explainErrors":
 		lspErr := cmd.Arguments[0].(string)
 		message := []claude.Message{{
@@ -559,6 +586,28 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 	return nil, nil
 }
 
+func codyDoPreamble(filename, filecontents string) []claude.Message {
+	return []claude.Message{
+		{
+			Speaker: claude.Human,
+			Text: fmt.Sprintf(`Here are the contents of the file you are working in:
+%s`, filecontents),
+		},
+		{
+			Speaker: claude.Assistant,
+			Text:    "Ok.",
+		},
+		{
+			Speaker: claude.Human,
+			Text:    fmt.Sprintf(`The programming language is %s`, determineLanguage(filename)),
+		},
+		{
+			Speaker: claude.Assistant,
+			Text:    "Ok.",
+		},
+	}
+}
+
 func (l *SourcegraphLLM) codyDo(filename, filecontents, function, instruction string, codeOnly bool) string {
 	var embeddings *embeddings.EmbeddingsSearchResult
 	if l.RepoID != "" {
@@ -569,24 +618,9 @@ func (l *SourcegraphLLM) codyDo(filename, filecontents, function, instruction st
 	if codeOnly {
 		assistantText = fmt.Sprintf("```%s\n", strings.ToLower(determineLanguage(filename)))
 	}
+	params.Messages = append(params.Messages, codyDoPreamble(filename, filecontents)...)
+	params.Messages = append(params.Messages, l.InteractionMemory...)
 	params.Messages = append(params.Messages,
-		claude.Message{
-			Speaker: claude.Human,
-			Text: fmt.Sprintf(`Here are the contents of the file you are working in:
-%s`, filecontents),
-		},
-		claude.Message{
-			Speaker: claude.Assistant,
-			Text:    "Ok.",
-		},
-		claude.Message{
-			Speaker: claude.Human,
-			Text:    fmt.Sprintf(`The programming language is %s`, determineLanguage(filename)),
-		},
-		claude.Message{
-			Speaker: claude.Assistant,
-			Text:    "Ok.",
-		},
 		claude.Message{
 			Speaker: claude.Human,
 			Text: fmt.Sprintf(`%s
@@ -606,6 +640,17 @@ func (l *SourcegraphLLM) codyDo(filename, filecontents, function, instruction st
 		}
 		implemented = strings.TrimPrefix(implemented, fmt.Sprintf("```%s\n", strings.ToLower(determineLanguage(filename))))
 	}
+
+	l.InteractionMemory = append(l.InteractionMemory,
+		claude.Message{
+			Speaker: claude.Human,
+			Text: fmt.Sprintf(`%s
+%s`, instruction, function),
+		},
+		claude.Message{
+			Speaker: claude.Assistant,
+			Text:    implemented,
+		})
 
 	return implemented
 }
