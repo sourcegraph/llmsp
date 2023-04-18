@@ -279,6 +279,12 @@ func (l *SourcegraphLLM) GetCodeActions(doc lsp.DocumentURI, selection lsp.Range
 			Arguments: []interface{}{doc, selection.Start.Line, selection.End.Line},
 		},
 	}
+	if len(l.InteractionMemory) > 0 {
+		commands = append(commands, lsp.Command{
+			Title:   "Cody: Forget",
+			Command: "cody.forget",
+		})
+	}
 	if strings.Contains(strings.Join(strings.Split(l.FileMap[doc], "\n")[selection.Start.Line:selection.End.Line+1], "\n"), fmt.Sprintf("%s TODO", cp)) {
 		commands = append(commands, lsp.Command{
 			Title:     "Implement TODOs",
@@ -507,6 +513,11 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 			Speaker: claude.Assistant,
 			Text:    "Ok.",
 		})
+
+		return nil, nil
+
+	case "cody.forget":
+		l.InteractionMemory = nil
 
 		return nil, nil
 
