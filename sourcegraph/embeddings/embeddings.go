@@ -3,7 +3,6 @@ package embeddings
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 )
@@ -104,30 +103,8 @@ func (c *Client) GetEmbeddings(repoID string, query string, codeResults int, tex
 		},
 	}
 
-	reqBody, err := json.Marshal(q)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", c.URL, bytes.NewBuffer(reqBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("Authorization", "token "+c.accessToken)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
 	var embeddings EmbeddingsResponse
-	if err := json.Unmarshal(respBody, &embeddings); err != nil {
+	if err := c.sendGraphQLRequest(q, &embeddings); err != nil {
 		return nil, err
 	}
 
@@ -146,32 +123,33 @@ func (c *Client) GetRepoID(repoName string) (string, error) {
 		},
 	}
 
-	reqBody, err := json.Marshal(q)
-	if err != nil {
+	var repoIDResponse RepoIDResponse
+	if err := c.sendGraphQLRequest(q, &repoIDResponse); err != nil {
 		return "", err
+	}
+
+	return repoIDResponse.Data.Repository.ID, nil
+}
+
+// sendGraphQLRequest sends a GraphQL request and parses the response.
+func (c *Client) sendGraphQLRequest(request interface{}, response interface{}) error {
+	reqBody, err := json.Marshal(request)
+	if err != nil {
+		return err
 	}
 
 	req, err := http.NewRequest("POST", c.URL, bytes.NewBuffer(reqBody))
 	if err != nil {
-		return "", err
+		return err
 	}
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Authorization", "token "+c.accessToken)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", err
-	}
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
+		return err
 	}
 	defer resp.Body.Close()
 
-	var repoIDResponse RepoIDResponse
-	if err := json.Unmarshal(respBody, &repoIDResponse); err != nil {
-		return "", err
-	}
-
-	return repoIDResponse.Data.Repository.ID, nil
+	return json.NewDecoder(resp.Body).Decode(response)
 }
