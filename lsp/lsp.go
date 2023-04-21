@@ -99,7 +99,7 @@ func (s *Server) Initialize() HandlerFunc {
 			WorkDoneProgress: true,
 		}
 		ecopts := lsp.ExecuteCommandOptions{
-			Commands: []string{"todos", "suggest", "answer", "docstring", "cody", "cody.explain", "cody.explainErrors", "cody.remember", "cody.forget"},
+			Commands: []string{"todos", "suggest", "answer", "docstring", "cody", "cody.explain", "cody.explainErrors", "cody.remember", "cody.forget", "cody.chat/history", "cody.chat/message"},
 		}
 
 		return types.InitializeResult{

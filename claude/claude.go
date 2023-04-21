@@ -189,9 +189,9 @@ func (c *Client) StreamCompletion(ctx context.Context, params *CompletionParamet
 				if strings.HasPrefix(string(line), "data: ") {
 					json.Unmarshal([]byte(strings.TrimPrefix(string(line), "data: ")), &completion)
 					if includePromptText {
-						retChan <- params.Messages[len(params.Messages)-1].Text + completion.Completion
+						retChan <- strings.TrimSuffix(params.Messages[len(params.Messages)-1].Text+completion.Completion, "\n```")
 					} else {
-						retChan <- completion.Completion
+						retChan <- strings.TrimSuffix(completion.Completion, "\n```")
 					}
 				}
 			}

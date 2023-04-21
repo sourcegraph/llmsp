@@ -458,43 +458,122 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 		}
 
 		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
-		implemented := l.codyDo(string(filename), l.FileMap[filename], funcSnippet, instruction, codeOnly)
-		if codeOnly {
-			implemented = fmt.Sprintf("```%s\n%s\n```", strings.ToLower(determineLanguage(string(filename))), implemented)
+		var embeddings *embeddings.EmbeddingsSearchResult
+		if l.RepoID != "" {
+			embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, instruction, 8, 2)
 		}
-
-		maxWidth := 80
-		lines := strings.Split(strings.TrimSpace(implemented), "\n")
-		var splitLines []string
-		for _, line := range lines {
-			line = strings.TrimRight(line, " ")
-			words := strings.Split(line, " ")
-			var lineWords []string
-			lineLen := 0
-			for _, word := range words {
-				if lineLen+len(word)+1 < maxWidth {
-					lineWords = append(lineWords, word)
-					lineLen += len(word) + 1
-				} else {
-					splitLines = append(splitLines, strings.Join(lineWords, " "))
-					lineWords = []string{word}
-					lineLen = len(word)
+		params := claude.DefaultCompletionParameters(l.getMessages(string(filename), embeddings))
+		var assistantText string
+		if codeOnly {
+			assistantText = fmt.Sprintf("```%s\n", strings.ToLower(determineLanguage(string(filename))))
+		}
+		humanMessage := claude.Message{
+			Speaker: claude.Human,
+			Text: fmt.Sprintf(`%s
+`+"```%s"+`
+%s
+`+"```", instruction, strings.ToLower(determineLanguage(string(filename))), funcSnippet),
+		}
+		params.Messages = append(params.Messages, codyDoPreamble(string(filename), l.FileMap[filename])...)
+		params.Messages = append(params.Messages, l.InteractionMemory...)
+		params.Messages = append(params.Messages,
+			humanMessage,
+			claude.Message{
+				Speaker: claude.Assistant,
+				Text:    assistantText,
+			})
+		retChan, _ := l.ClaudeClient.StreamCompletion(ctx, params, false)
+		var finalMessage string
+		for resp := range retChan {
+			maxWidth := 80
+			if codeOnly {
+				if endCodeIndex := strings.Index(resp, "\n```"); endCodeIndex != -1 {
+					resp = resp[:endCodeIndex]
 				}
 			}
-			if len(lineWords) > 0 {
-				splitLines = append(splitLines, strings.Join(lineWords, " "))
+			finalMessage = resp
+			lines := strings.Split(strings.TrimSpace(resp), "\n")
+			var splitLines []string
+			for _, line := range lines {
+				line = strings.TrimRight(line, " ")
+				words := strings.Split(line, " ")
+				var lineWords []string
+				lineLen := 0
+				for _, word := range words {
+					if lineLen+len(word)+1 < maxWidth {
+						lineWords = append(lineWords, word)
+						lineLen += len(word) + 1
+					} else {
+						splitLines = append(splitLines, strings.Join(lineWords, " "))
+						lineWords = []string{word}
+						lineLen = len(word)
+					}
+				}
+				if len(lineWords) > 0 {
+					splitLines = append(splitLines, strings.Join(lineWords, " "))
+				}
+			}
+
+			jsonResponse := struct {
+				Message []string `json:"message"`
+			}{
+				Message: splitLines,
+			}
+			mars, _ := json.Marshal(jsonResponse)
+			msJson := json.RawMessage(mars)
+			conn.Notify(ctx, "cody/chat", msJson)
+			if codeOnly {
+				if endCodeIndex := strings.Index(resp, "\n```"); endCodeIndex != -1 {
+					break
+				}
 			}
 		}
-
-		resp := struct {
-			Message []string `json:"message"`
-		}{
-			Message: splitLines,
+		if codeOnly {
+			finalMessage = fmt.Sprintf("```%s\n%s\n```", strings.ToLower(determineLanguage(string(filename))), finalMessage)
 		}
-		mars, _ := json.Marshal(resp)
-		msJson := json.RawMessage(mars)
+		l.InteractionMemory = append(l.InteractionMemory, humanMessage, claude.Message{
+			Speaker: claude.Assistant,
+			Text:    finalMessage,
+		},
+		)
+		return nil, nil
+		// implemented := l.codyDo(string(filename), l.FileMap[filename], funcSnippet, instruction, codeOnly)
+		// if codeOnly {
+		// 	implemented = fmt.Sprintf("```%s\n%s\n```", strings.ToLower(determineLanguage(string(filename))), implemented)
+		// }
 
-		return &msJson, nil
+		// maxWidth := 80
+		// lines := strings.Split(strings.TrimSpace(implemented), "\n")
+		// var splitLines []string
+		// for _, line := range lines {
+		// 	line = strings.TrimRight(line, " ")
+		// 	words := strings.Split(line, " ")
+		// 	var lineWords []string
+		// 	lineLen := 0
+		// 	for _, word := range words {
+		// 		if lineLen+len(word)+1 < maxWidth {
+		// 			lineWords = append(lineWords, word)
+		// 			lineLen += len(word) + 1
+		// 		} else {
+		// 			splitLines = append(splitLines, strings.Join(lineWords, " "))
+		// 			lineWords = []string{word}
+		// 			lineLen = len(word)
+		// 		}
+		// 	}
+		// 	if len(lineWords) > 0 {
+		// 		splitLines = append(splitLines, strings.Join(lineWords, " "))
+		// 	}
+		// }
+
+		// resp := struct {
+		// 	Message []string `json:"message"`
+		// }{
+		// 	Message: splitLines,
+		// }
+		// mars, _ := json.Marshal(resp)
+		// msJson := json.RawMessage(mars)
+
+		// return &msJson, nil
 
 	case "cody.remember":
 		filename := lsp.DocumentURI(cmd.Arguments[0].(string))
@@ -516,10 +595,53 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, cmd lsp.Command, co
 
 		return nil, nil
 
+	case "cody.chat/history":
+		mars, _ := json.Marshal(l.InteractionMemory)
+		msJson := json.RawMessage(mars)
+
+		return &msJson, nil
+
 	case "cody.forget":
 		l.InteractionMemory = nil
 
 		return nil, nil
+
+	case "cody.chat/message":
+		message := cmd.Arguments[0].(string)
+
+		var embeddings *embeddings.EmbeddingsSearchResult
+		if l.RepoID != "" {
+			embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, message, 8, 2)
+		}
+		params := claude.DefaultCompletionParameters(l.getMessages("", embeddings))
+		params.Messages = append(params.Messages, l.InteractionMemory...)
+		params.Messages = append(params.Messages,
+			claude.Message{
+				Speaker: claude.Human,
+				Text:    message,
+			},
+			claude.Message{
+				Speaker: claude.Assistant,
+				Text:    "",
+			})
+		codyResponse, _ := l.ClaudeClient.GetCompletion(ctx, params, false)
+		codyResponse = strings.TrimSpace(codyResponse)
+
+		resp := struct {
+			Message string `json:"message"`
+		}{
+			Message: codyResponse,
+		}
+		mars, _ := json.Marshal(resp)
+		msJson := json.RawMessage(mars)
+		l.InteractionMemory = append(l.InteractionMemory, claude.Message{
+			Speaker: claude.Human,
+			Text:    message,
+		}, claude.Message{
+			Speaker: claude.Assistant,
+			Text:    codyResponse,
+		})
+		return &msJson, nil
 
 	case "cody.explainErrors":
 		lspErr := cmd.Arguments[0].(string)
@@ -853,17 +975,35 @@ Line {number}: {suggestion}`, filename, content),
 }
 
 func (l *SourcegraphLLM) getMessages(filename string, embeddingResults *embeddings.EmbeddingsSearchResult) []claude.Message {
-	codyMessage := fmt.Sprintf(`I am Cody, an AI-powered coding assistant developed by Sourcegraph. I operate inside a Language Server Protocol implementation. My task is to help programmers with programming tasks in the %s programming language.
+	humanMessage := fmt.Sprintf(`You are Cody, an AI-powered coding assistant developed by Sourcegraph. You operate inside a Language Server Protocol implementation. Your task is to help programmers with programming tasks in all programming languages.
+You have access to my currently open files in the editor.
+You will generate suggestions as concisely and clearly as possible.
+You only suggest something if you are certain about your answer.`)
+	codyMessage := fmt.Sprintf(`I am Cody, an AI-powered coding assistant developed by Sourcegraph. I operate inside a Language Server Protocol implementation. My task is to help programmers with programming tasks in all programming languages.
 I have access to your currently open files in the editor.
 I will generate suggestions as concisely and clearly as possible.
-I only suggest something if I am certain about my answer.`, determineLanguage(filename))
+I only suggest something if I am certain about my answer.`)
 	if l.RepoName != "" {
 		codyMessage += fmt.Sprintf("\nI have knowledge about the %s repository and can answer questions about it.", l.RepoName)
 	}
 	messages := []claude.Message{{
+		Speaker: claude.Human,
+		Text:    humanMessage,
+	}, {
 		Speaker: claude.Assistant,
 		Text:    codyMessage,
 	}}
+	for k, v := range l.FileMap {
+		messages = append(messages, claude.Message{
+			Speaker: claude.Human,
+			Text: fmt.Sprintf(`Here are the contents of the file '%s':
+%s`, k, v),
+		},
+			claude.Message{
+				Speaker: claude.Assistant,
+				Text:    "Ok.",
+			})
+	}
 	if embeddingResults != nil {
 		for _, embedding := range embeddingResults.CodeResults {
 			messages = append(messages, claude.Message{
