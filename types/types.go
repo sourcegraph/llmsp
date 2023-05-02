@@ -191,3 +191,9 @@ type CodeActionParams struct {
 	Range        lsp.Range                  `json:"range"`
 	Context      CodeActionContext          `json:"context"`
 }
+
+type ExecuteCommandParams struct {
+	Command       string        `json:"command"`
+	Arguments     []interface{} `json:"arguments,omitempty"`
+	WorkDoneToken string        `json:"workDoneToken"`
+}
