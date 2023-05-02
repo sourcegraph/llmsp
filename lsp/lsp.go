@@ -60,6 +60,12 @@ type server struct {
 	router *Router
 }
 
+// registerHandler is a convenience function to register handlers on a server
+// and reduce the boilerplate of calling LSPHandlerFunc on every handler.
+func registerHandler[T any](s *server, method string, handler LSPHandler[T]) {
+	s.router.Register(method, LSPHandlerFunc(handler))
+}
+
 // NewServer creates a new server instance.
 //
 // url is the base URL of the API server.
@@ -71,36 +77,36 @@ func NewServer(url, accessToken string) *server {
 		AccessToken: accessToken,
 	}
 	s.router = NewRouter()
-	s.router.Register("initialize", LSPHandlerFunc(s.initialize))
-	s.router.Register("textDocument/didChange", LSPHandlerFunc(s.textDocumentDidChange))
-	s.router.Register("textDocument/didOpen", LSPHandlerFunc(s.textDocumentDidOpen))
-	s.router.Register("textDocument/codeAction",
-		s.requiresInitialized(LSPHandlerFunc(s.textDocumentCodeAction)))
-	s.router.Register("textDocument/completion",
-		s.requiresInitialized(LSPHandlerFunc(s.textDocumentCompletion)))
-	s.router.Register("workspace/didChangeConfiguration",
-		LSPHandlerFunc(s.workspaceDidChangeConfiguration))
-	s.router.Register("workspace/executeCommand",
-		s.requiresInitialized(LSPHandlerFunc(s.workspaceExecuteCommand)))
+	registerHandler(s, "initialize", s.initialize)
+	registerHandler(s, "textDocument/didChange", s.textDocumentDidChange)
+	registerHandler(s, "textDocument/didOpen", s.textDocumentDidOpen)
+	registerHandler(s, "textDocument/codeAction", requiresInitialized(s, s.textDocumentCodeAction))
+	registerHandler(s, "textDocument/completion", requiresInitialized(s, s.textDocumentCompletion))
+	registerHandler(s, "workspace/didChangeConfiguration", s.workspaceDidChangeConfiguration)
+	registerHandler(s, "workspace/executeCommand", requiresInitialized(s, s.workspaceExecuteCommand))
 
 	return s
 }
 
+// Handle implements the jsonrpc2.Handler interface for server, passing the request to
+// the router.
 func (s *server) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	s.router.Handle(ctx, conn, req)
 }
 
-func (s *server) requiresInitialized(handler jsonrpc2.Handler) jsonrpc2.Handler {
-	if !s.initialized {
-		return jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
+// requiresInitialized is middleware that checks whether or not the server has been
+// initialized. If not, it returns an error.
+func requiresInitialized[T any](s *server, handler LSPHandler[T]) LSPHandler[T] {
+	return func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request, params T) (any, error) {
+		if !s.initialized {
 			return nil, errors.New("server has not yet been initialized")
-		})
-	}
+		}
 
-	return handler
+		return handler(ctx, conn, req, params)
+	}
 }
 
-func (s *server) initialize(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request, params lsp.InitializeParams) (any, error) {
+func (s *server) initialize(_ context.Context, _ *jsonrpc2.Conn, _ *jsonrpc2.Request, params lsp.InitializeParams) (any, error) {
 	if !s.initialized && s.URL != "" && s.AccessToken != "" {
 		provider := &providers.SourcegraphLLM{
 			FileMap: s.FileMap,
@@ -159,7 +165,7 @@ func (s *server) textDocumentDidOpen(_ context.Context, _ *jsonrpc2.Conn, _ *jso
 	return nil, nil
 }
 
-func (s *server) textDocumentCodeAction(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request, params types.CodeActionParams) (any, error) {
+func (s *server) textDocumentCodeAction(_ context.Context, _ *jsonrpc2.Conn, _ *jsonrpc2.Request, params types.CodeActionParams) (any, error) {
 	commands := s.Provider.GetCodeActions(params.TextDocument.URI, params.Range)
 	for _, diagnostic := range params.Context.Diagnostics {
 		commands = append(commands, lsp.Command{
@@ -184,7 +190,7 @@ func (s *server) textDocumentCodeAction(ctx context.Context, conn *jsonrpc2.Conn
 	return commands, nil
 }
 
-func (s *server) textDocumentCompletion(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request, params types.CompletionParams) (any, error) {
+func (s *server) textDocumentCompletion(ctx context.Context, conn *jsonrpc2.Conn, _ *jsonrpc2.Request, params types.CompletionParams) (any, error) {
 	if s.AutoComplete == "" || s.AutoComplete == "off" {
 		return nil, nil
 	}
@@ -220,7 +226,7 @@ func (s *server) textDocumentCompletion(ctx context.Context, conn *jsonrpc2.Conn
 	}, nil
 }
 
-func (s *server) workspaceDidChangeConfiguration(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request, params types.DidChangeConfigurationParams) (any, error) {
+func (s *server) workspaceDidChangeConfiguration(ctx context.Context, conn *jsonrpc2.Conn, _ *jsonrpc2.Request, params types.DidChangeConfigurationParams) (any, error) {
 	if params.Settings.LLMSP.Sourcegraph.AutoComplete != "" {
 		s.AutoComplete = params.Settings.LLMSP.Sourcegraph.AutoComplete
 	}
@@ -240,7 +246,7 @@ func (s *server) workspaceDidChangeConfiguration(ctx context.Context, conn *json
 	return nil, nil
 }
 
-func (s *server) workspaceExecuteCommand(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request, params types.ExecuteCommandParams) (any, error) {
+func (s *server) workspaceExecuteCommand(ctx context.Context, conn *jsonrpc2.Conn, _ *jsonrpc2.Request, params types.ExecuteCommandParams) (any, error) {
 	uuid := uuid.New().String()
 	var res any
 	conn.Call(ctx, "window/workDoneProgress/create", types.WorkDoneProgressCreateParams{

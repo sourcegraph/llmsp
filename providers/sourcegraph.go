@@ -1,12 +1,9 @@
 package providers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"net/http"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -455,6 +452,10 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 		startLine := int(params.Arguments[1].(float64))
 		endLine := int(params.Arguments[2].(float64))
 		instruction := params.Arguments[3].(string)
+		var codeOnly bool
+		if len(params.Arguments) >= 5 {
+			codeOnly = params.Arguments[4].(bool)
+		}
 
 		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
 		humanMessage := fmt.Sprintf(`%s
@@ -462,146 +463,82 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 %s
 `+"```", instruction, strings.ToLower(determineLanguage(string(filename))), funcSnippet)
 
-		// var embeddings *embeddings.EmbeddingsSearchResult
-		// if l.RepoID != "" {
-		// 	embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, message, 8, 2)
-		// }
-		// params := claude.DefaultCompletionParameters(l.getMessages("", embeddings))
-		// params.Messages = append(params.Messages, l.InteractionMemory...)
-		// params.Messages = append(params.Messages,
-		// 	claude.Message{
-		// 		Speaker: claude.Human,
-		// 		Text:    message,
-		// 	},
-		// 	claude.Message{
-		// 		Speaker: claude.Assistant,
-		// 		Text:    "",
-		// 	})
-		// codyResponse, _ := l.ClaudeClient.GetCompletion(ctx, params, false)
-		// codyResponse = strings.TrimSpace(codyResponse)
-		req := struct {
-			Message string `json:"message"`
-		}{
-			Message: humanMessage,
+		var embeddings *embeddings.EmbeddingsSearchResult
+		if l.RepoID != "" {
+			embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, humanMessage, 8, 2)
 		}
-		var buf bytes.Buffer
-
-		json.NewEncoder(&buf).Encode(req)
-
-		rsp, _ := http.Post("http://localhost:1337/completion",
-			"application/json", &buf)
-
-		body, _ := ioutil.ReadAll(rsp.Body)
-
-		resp := struct {
-			Message string `json:"message"`
-		}{
-			Message: string(body),
+		params := claude.DefaultCompletionParameters(l.getMessages("", embeddings))
+		var assistantText string
+		if codeOnly {
+			assistantText = fmt.Sprintf("```%s\n", strings.ToLower(determineLanguage(string(filename))))
 		}
-		mars, _ := json.Marshal(resp)
-		msJson := json.RawMessage(mars)
-		conn.Notify(ctx, "cody/chat", msJson)
+
+		params.Messages = append(params.Messages, codyDoPreamble(string(filename), l.FileMap[filename])...)
+		params.Messages = append(params.Messages, l.InteractionMemory...)
+		params.Messages = append(params.Messages,
+			claude.Message{
+				Speaker: claude.Human,
+				Text:    humanMessage,
+			},
+			claude.Message{
+				Speaker: claude.Assistant,
+				Text:    assistantText,
+			})
+		retChan, _ := l.ClaudeClient.StreamCompletion(ctx, params, false)
+		var finalMessage string
+		for resp := range retChan {
+			maxWidth := 80
+			if codeOnly {
+				if endCodeIndex := strings.Index(resp, "\n```"); endCodeIndex != -1 {
+					resp = resp[:endCodeIndex]
+				}
+			}
+			finalMessage = resp
+			lines := strings.Split(strings.TrimSpace(resp), "\n")
+			var splitLines []string
+			for _, line := range lines {
+				line = strings.TrimRight(line, " ")
+				words := strings.Split(line, " ")
+				var lineWords []string
+				lineLen := 0
+				for _, word := range words {
+					if lineLen+len(word)+1 < maxWidth {
+						lineWords = append(lineWords, word)
+						lineLen += len(word) + 1
+					} else {
+						splitLines = append(splitLines, strings.Join(lineWords, " "))
+						lineWords = []string{word}
+						lineLen = len(word)
+					}
+				}
+				if len(lineWords) > 0 {
+					splitLines = append(splitLines, strings.Join(lineWords, " "))
+				}
+			}
+
+			jsonResponse := struct {
+				Message []string `json:"message"`
+			}{
+				Message: splitLines,
+			}
+			mars, _ := json.Marshal(jsonResponse)
+			msJson := json.RawMessage(mars)
+			conn.Notify(ctx, "cody/chat", msJson)
+			if codeOnly {
+				if endCodeIndex := strings.Index(resp, "\n```"); endCodeIndex != -1 {
+					break
+				}
+			}
+		}
+		if codeOnly {
+			finalMessage = fmt.Sprintf("```%s\n%s\n```", strings.ToLower(determineLanguage(string(filename))), finalMessage)
+		}
+		l.InteractionMemory = append(l.InteractionMemory, claude.Message{Speaker: claude.Human, Text: humanMessage}, claude.Message{
+			Speaker: claude.Assistant,
+			Text:    finalMessage,
+		},
+		)
 		return nil, nil
-		// 		params.Messages = append(params.Messages, codyDoPreamble(string(filename), l.FileMap[filename])...)
-		// 		params.Messages = append(params.Messages, l.InteractionMemory...)
-		// 		params.Messages = append(params.Messages,
-		// 			humanMessage,
-		// 			claude.Message{
-		// 				Speaker: claude.Assistant,
-		// 				Text:    assistantText,
-		// 			})
-		// 		retChan, _ := l.ClaudeClient.StreamCompletion(ctx, params, false)
-		// 		var finalMessage string
-		// 		for resp := range retChan {
-		// 			maxWidth := 80
-		// 			if codeOnly {
-		// 				if endCodeIndex := strings.Index(resp, "\n```"); endCodeIndex != -1 {
-		// 					resp = resp[:endCodeIndex]
-		// 				}
-		// 			}
-		// 			finalMessage = resp
-		// 			lines := strings.Split(strings.TrimSpace(resp), "\n")
-		// 			var splitLines []string
-		// 			for _, line := range lines {
-		// 				line = strings.TrimRight(line, " ")
-		// 				words := strings.Split(line, " ")
-		// 				var lineWords []string
-		// 				lineLen := 0
-		// 				for _, word := range words {
-		// 					if lineLen+len(word)+1 < maxWidth {
-		// 						lineWords = append(lineWords, word)
-		// 						lineLen += len(word) + 1
-		// 					} else {
-		// 						splitLines = append(splitLines, strings.Join(lineWords, " "))
-		// 						lineWords = []string{word}
-		// 						lineLen = len(word)
-		// 					}
-		// 				}
-		// 				if len(lineWords) > 0 {
-		// 					splitLines = append(splitLines, strings.Join(lineWords, " "))
-		// 				}
-		// 			}
-		//
-		// 			jsonResponse := struct {
-		// 				Message []string `json:"message"`
-		// 			}{
-		// 				Message: splitLines,
-		// 			}
-		// 			mars, _ := json.Marshal(jsonResponse)
-		// 			msJson := json.RawMessage(mars)
-		// 			conn.Notify(ctx, "cody/chat", msJson)
-		// 			if codeOnly {
-		// 				if endCodeIndex := strings.Index(resp, "\n```"); endCodeIndex != -1 {
-		// 					break
-		// 				}
-		// 			}
-		// 		}
-		// 		if codeOnly {
-		// 			finalMessage = fmt.Sprintf("```%s\n%s\n```", strings.ToLower(determineLanguage(string(filename))), finalMessage)
-		// 		}
-		// 		l.InteractionMemory = append(l.InteractionMemory, humanMessage, claude.Message{
-		// 			Speaker: claude.Assistant,
-		// 			Text:    finalMessage,
-		// 		},
-		// 		)
-		return nil, nil
-		// implemented := l.codyDo(string(filename), l.FileMap[filename], funcSnippet, instruction, codeOnly)
-		// if codeOnly {
-		// 	implemented = fmt.Sprintf("```%s\n%s\n```", strings.ToLower(determineLanguage(string(filename))), implemented)
-		// }
-
-		// maxWidth := 80
-		// lines := strings.Split(strings.TrimSpace(implemented), "\n")
-		// var splitLines []string
-		// for _, line := range lines {
-		// 	line = strings.TrimRight(line, " ")
-		// 	words := strings.Split(line, " ")
-		// 	var lineWords []string
-		// 	lineLen := 0
-		// 	for _, word := range words {
-		// 		if lineLen+len(word)+1 < maxWidth {
-		// 			lineWords = append(lineWords, word)
-		// 			lineLen += len(word) + 1
-		// 		} else {
-		// 			splitLines = append(splitLines, strings.Join(lineWords, " "))
-		// 			lineWords = []string{word}
-		// 			lineLen = len(word)
-		// 		}
-		// 	}
-		// 	if len(lineWords) > 0 {
-		// 		splitLines = append(splitLines, strings.Join(lineWords, " "))
-		// 	}
-		// }
-
-		// resp := struct {
-		// 	Message []string `json:"message"`
-		// }{
-		// 	Message: splitLines,
-		// }
-		// mars, _ := json.Marshal(resp)
-		// msJson := json.RawMessage(mars)
-
-		// return &msJson, nil
 
 	case "cody.remember":
 		filename := lsp.DocumentURI(params.Arguments[0].(string))
@@ -637,41 +574,28 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 	case "cody.chat/message":
 		message := params.Arguments[0].(string)
 
-		// var embeddings *embeddings.EmbeddingsSearchResult
-		// if l.RepoID != "" {
-		// 	embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, message, 8, 2)
-		// }
-		// params := claude.DefaultCompletionParameters(l.getMessages("", embeddings))
-		// params.Messages = append(params.Messages, l.InteractionMemory...)
-		// params.Messages = append(params.Messages,
-		// 	claude.Message{
-		// 		Speaker: claude.Human,
-		// 		Text:    message,
-		// 	},
-		// 	claude.Message{
-		// 		Speaker: claude.Assistant,
-		// 		Text:    "",
-		// 	})
-		// codyResponse, _ := l.ClaudeClient.GetCompletion(ctx, params, false)
-		// codyResponse = strings.TrimSpace(codyResponse)
-		req := struct {
-			Message string `json:"message"`
-		}{
-			Message: message,
+		var embeddings *embeddings.EmbeddingsSearchResult
+		if l.RepoID != "" {
+			embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, message, 8, 2)
 		}
-		var buf bytes.Buffer
-
-		json.NewEncoder(&buf).Encode(req)
-
-		rsp, _ := http.Post("http://localhost:1337/completion",
-			"application/json", &buf)
-
-		body, _ := ioutil.ReadAll(rsp.Body)
+		params := claude.DefaultCompletionParameters(l.getMessages("", embeddings))
+		params.Messages = append(params.Messages, l.InteractionMemory...)
+		params.Messages = append(params.Messages,
+			claude.Message{
+				Speaker: claude.Human,
+				Text:    message,
+			},
+			claude.Message{
+				Speaker: claude.Assistant,
+				Text:    "",
+			})
+		codyResponse, _ := l.ClaudeClient.GetCompletion(ctx, params, false)
+		codyResponse = strings.TrimSpace(codyResponse)
 
 		resp := struct {
 			Message string `json:"message"`
 		}{
-			Message: string(body),
+			Message: codyResponse,
 		}
 		mars, _ := json.Marshal(resp)
 		msJson := json.RawMessage(mars)
@@ -680,7 +604,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 			Text:    message,
 		}, claude.Message{
 			Speaker: claude.Assistant,
-			Text:    string(body),
+			Text:    codyResponse,
 		})
 		return &msJson, nil
 
