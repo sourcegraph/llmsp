@@ -20,6 +20,7 @@ import (
 
 type SourcegraphLLM struct {
 	FileMap           types.MemoryFileMap
+	EventLogger       *eventLogger
 	EmbeddingsClient  *embeddings.Client
 	ClaudeClient      *claude.Client
 	URL               string
@@ -126,11 +127,15 @@ func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
 		return fmt.Errorf("Sourcegraph settings not present")
 	}
 
+	serverClient := embeddings.NewClient(l.URL, l.AccessToken, nil)
+	dotcomClient := embeddings.NewClient(sourcegraphDotComURL, "", nil)
+
 	l.URL = settings.Sourcegraph.URL
 	l.AccessToken = settings.Sourcegraph.AccessToken
-	l.EmbeddingsClient = embeddings.NewClient(l.URL, l.AccessToken, nil)
+	l.EmbeddingsClient = serverClient
 	l.ClaudeClient = claude.NewClient(l.URL, l.AccessToken, nil)
 	l.InteractionMemory = make([]claude.Message, 0)
+	l.EventLogger = NewEventLogger(serverClient, dotcomClient, l.URL)
 
 	gitURL := getGitURL()
 	if gitURL != "" {
@@ -448,6 +453,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 		conn.Call(ctx, "workspace/applyEdit", editParams, &res)
 
 	case "cody.explain":
+		l.EventLogger.Log("CodyNeovimExtension:codeAction:cody.explain:executed")
 		filename := lsp.DocumentURI(params.Arguments[0].(string))
 		startLine := int(params.Arguments[1].(float64))
 		endLine := int(params.Arguments[2].(float64))
@@ -606,6 +612,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 			Speaker: claude.Assistant,
 			Text:    codyResponse,
 		})
+		l.EventLogger.Log("CodyNeovimExtension:codeAction:cody.chat:executed")
 		return &msJson, nil
 
 	case "cody.explainErrors":
