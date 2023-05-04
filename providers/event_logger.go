@@ -3,8 +3,6 @@ package providers
 import (
 	"encoding/json"
 	"io/ioutil"
-	"os"
-	"path/filepath"
 
 	"github.com/google/uuid"
 	"github.com/pjlast/llmsp/sourcegraph/embeddings"
@@ -32,17 +30,13 @@ type eventLogger struct {
 	publicArgument string
 }
 
-func NewEventLogger(serverClient *embeddings.Client, dotcomClient *embeddings.Client, serverURL string) *eventLogger {
+func NewEventLogger(serverClient *embeddings.Client, dotcomClient *embeddings.Client, serverURL string, uidFile string) *eventLogger {
 	newInstall := false
-	uid, err := readUidFromFile()
+	uid, err := readUidFromFile(uidFile)
 	if err != nil {
 		newInstall = true
 		uid = uuid.New().String()
-		path, err := getUidFilePath()
-		if err != nil {
-			panic(err)
-		}
-		err = ioutil.WriteFile(path, []byte(uid), 0o644)
+		err = ioutil.WriteFile(uidFile, []byte(uid), 0o644)
 		if err != nil {
 			panic(err)
 		}
@@ -71,19 +65,7 @@ func NewEventLogger(serverClient *embeddings.Client, dotcomClient *embeddings.Cl
 	return eventLogger
 }
 
-func getUidFilePath() (string, error) {
-	dirname, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dirname, ".local", "share", "nvim", "llmsp", "sourcegraphAnonymousUid"), nil
-}
-
-func readUidFromFile() (string, error) {
-	path, err := getUidFilePath()
-	if err != nil {
-		return "", err
-	}
+func readUidFromFile(path string) (string, error) {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		return "", err

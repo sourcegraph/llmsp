@@ -19,6 +19,7 @@ import (
 )
 
 type SourcegraphLLM struct {
+	AnonymousUIDPath  string
 	FileMap           types.MemoryFileMap
 	EventLogger       *eventLogger
 	EmbeddingsClient  *embeddings.Client
@@ -135,7 +136,8 @@ func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
 	l.EmbeddingsClient = serverClient
 	l.ClaudeClient = claude.NewClient(l.URL, l.AccessToken, nil)
 	l.InteractionMemory = make([]claude.Message, 0)
-	l.EventLogger = NewEventLogger(serverClient, dotcomClient, l.URL)
+	l.AnonymousUIDPath = settings.Sourcegraph.AnonymousUIDFile
+	l.EventLogger = NewEventLogger(serverClient, dotcomClient, l.URL, l.AnonymousUIDPath)
 
 	gitURL := getGitURL()
 	if gitURL != "" {
