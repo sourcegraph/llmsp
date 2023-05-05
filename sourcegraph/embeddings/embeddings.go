@@ -7,19 +7,16 @@ import (
 	"strings"
 )
 
+type EmbeddingsResult struct {
+	FileName  string
+	StartLine int
+	EndLine   int
+	Content   string
+}
+
 type EmbeddingsSearchResult struct {
-	CodeResults []struct {
-		FileName  string
-		StartLine int
-		EndLine   int
-		Content   string
-	}
-	TextResults []struct {
-		FileName  string
-		StartLine int
-		EndLine   int
-		Content   string
-	}
+	CodeResults []EmbeddingsResult
+	TextResults []EmbeddingsResult
 }
 
 type EmbeddingsResponse struct {

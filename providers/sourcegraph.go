@@ -18,6 +18,12 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
+const (
+	charsPerToken        = 4
+	maxPromptTokenLength = 7000
+	maxCurrentFileTokens = 1000
+)
+
 type SourcegraphLLM struct {
 	AnonymousUIDPath  string
 	FileMap           types.MemoryFileMap
@@ -34,6 +40,30 @@ type SourcegraphLLM struct {
 		context.Context
 		CancelFunc context.CancelFunc
 	}
+}
+
+// truncateTextStarts trims the beginning of the text, leaving only the last `maxTokens`.
+func truncateTextStart(text string, maxTokens int) (string, int) {
+	maxLength := maxTokens * charsPerToken
+	if len(text) > maxLength {
+		text = text[len(text)-maxLength:]
+	}
+
+	return text, getTokenLength(text)
+}
+
+// truncateText trims the end of the text, leaving only the first `maxTokens`.
+func truncateText(text string, maxTokens int) (string, int) {
+	maxLength := maxTokens * charsPerToken
+	if len(text) > maxLength {
+		text = text[:maxLength]
+	}
+
+	return text, getTokenLength(text)
+}
+
+func getTokenLength(text string) int {
+	return (len(text) + charsPerToken - 1) / charsPerToken
 }
 
 func getGitURL() string {
@@ -105,22 +135,6 @@ func determineLanguage(filename string) string {
 	default:
 		return strings.TrimPrefix(ext, ".")
 	}
-}
-
-func truncateText(text string, maxTokens int) string {
-	maxLength := maxTokens * 4
-	if len(text) < maxLength {
-		return text
-	}
-	return text[:maxLength]
-}
-
-func truncateTextStart(text string, maxTokens int) string {
-	maxLength := maxTokens * 4
-	if len(text) < maxLength {
-		return text
-	}
-	return text[len(text)-maxLength:]
 }
 
 func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
@@ -218,11 +232,12 @@ func (l *SourcegraphLLM) GetCompletions(ctx context.Context, params types.Comple
 		embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, snippet, 8, 0)
 	}
 	claudeParams := claude.DefaultCompletionParameters(l.getMessages(string(params.TextDocument.URI), embeddings))
+	truncText, _ := truncateText(l.FileMap[params.TextDocument.URI], maxCurrentFileTokens)
 	claudeParams.Messages = append(claudeParams.Messages,
 		claude.Message{
 			Speaker: claude.Human,
 			Text: fmt.Sprintf(`Here are the contents of the file you are working in:
-%s`, truncateText(l.FileMap[params.TextDocument.URI], 1000)),
+%s`, truncText),
 		},
 		claude.Message{
 			Speaker: claude.Assistant,
@@ -564,24 +579,25 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 		return nil, nil
 
 	case "cody.chat/message":
-		message := params.Arguments[0].(string)
+		filename := lsp.DocumentURI(params.Arguments[0].(string))
+		message := params.Arguments[1].(string)
 
-		var embeddings *embeddings.EmbeddingsSearchResult
-		if l.RepoID != "" {
-			embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, message, 8, 2)
-		}
-		params := claude.DefaultCompletionParameters(l.getMessages("", embeddings))
-		params.Messages = append(params.Messages, l.InteractionMemory...)
-		params.Messages = append(params.Messages,
-			claude.Message{
+		input := []claude.Message{
+			{
 				Speaker: claude.Human,
 				Text:    message,
 			},
-			claude.Message{
+			{
 				Speaker: claude.Assistant,
 				Text:    "",
-			})
-		codyResponse, _ := l.ClaudeClient.GetCompletion(ctx, params, false)
+			},
+		}
+
+		params := claude.DefaultCompletionParameters(l.AddContext(input, string(filename), l.FileMap[filename]))
+		codyResponse, err := l.ClaudeClient.GetCompletion(ctx, params, false)
+		if err != nil {
+			panic(err)
+		}
 		codyResponse = strings.TrimSpace(codyResponse)
 
 		resp := struct {
@@ -719,28 +735,131 @@ func codyDoPreamble(filename, filecontents string) []claude.Message {
 	}
 }
 
-func (l *SourcegraphLLM) codyDo(filename, filecontents, function, instruction string, codeOnly bool) string {
-	var embeddings *embeddings.EmbeddingsSearchResult
-	if l.RepoID != "" {
-		embeddings, _ = l.EmbeddingsClient.GetEmbeddings(l.RepoID, instruction, 8, 2)
+// reverseSlice reverses a slice in place
+func reverseSlice[S ~[]E, E any](s S) {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
 	}
-	params := claude.DefaultCompletionParameters(l.getMessages(filename, embeddings))
+}
+
+// trimMessages makes sure that msgs don't exceed maxTokens. It assumes
+// that the most important messages are at the end of the slice.
+// It returns the trimmed slice, as well as the number of tokens used.
+func trimMessages(msgs []claude.Message, maxTokens int) ([]claude.Message, int) {
+	if len(msgs) == 0 {
+		return nil, 0
+	}
+	var trimmedMessages []claude.Message
+	tokens := 0
+	for i := len(msgs) - 1; i >= 0 && tokens < maxTokens; i-- {
+		text, ts := truncateTextStart(msgs[i].Text, maxTokens-tokens)
+		tokens += ts
+		trimmedMessages = append(trimmedMessages, claude.Message{
+			Speaker: msgs[i].Speaker,
+			Text:    text,
+		})
+	}
+	reverseSlice(trimmedMessages)
+	// The messages _must_ start with a Human speaker
+	if trimmedMessages[0].Speaker != claude.Human {
+		tokens -= getTokenLength(trimmedMessages[0].Text)
+		trimmedMessages = trimmedMessages[1:]
+	}
+	return trimmedMessages, tokens
+}
+
+func (l *SourcegraphLLM) AddContext(input []claude.Message, currentFile string, currentFileContents string) []claude.Message {
+	tokens := maxPromptTokenLength
+	messages := l.getPreamble()
+
+	// First make sure we have space for the preamble
+	for _, message := range messages {
+		tokens -= getTokenLength(message.Text)
+	}
+
+	truncedContents, _ := truncateText(currentFileContents, maxCurrentFileTokens-10)
+	// Also reserve some space for some of the contents of the current open file.
+	currentFileMessages := []claude.Message{
+		{
+			Speaker: claude.Human,
+			Text:    fmt.Sprintf("Here are the contents of the file, `%s`, we are in right now:\n%s", currentFile, truncedContents),
+		},
+		{
+			Speaker: claude.Assistant,
+			Text:    "Ok.",
+		},
+	}
+	currentFileMessages, tokensUsed := trimMessages(currentFileMessages, maxCurrentFileTokens)
+	tokens -= tokensUsed
+
+	// Next make sure we have space for the actual prompt
+	for _, message := range input {
+		tokens -= getTokenLength(message.Text)
+	}
+
+	// Next we need to determine whether or not embeddings search is being used.
+	// If it is, we split the remaining tokens between the interaction history
+	// and the embedding results.
+	maxEmbeddingsTokens := tokens / 2
+	embeddingsMessages := []claude.Message{}
+	if l.RepoID != "" {
+		embs, err := l.EmbeddingsClient.GetEmbeddings(l.RepoID, input[len(input)-1].Text, 12, 3)
+		// If embeddings fail for some reason, we don't want to end the interaction
+		if err == nil && embs != nil {
+			embeddingsResults := append(embs.CodeResults, embs.TextResults...)
+			reverseSlice(embeddingsResults) // Reverse results so that they appear in ascending order of importance (least -> most)
+			for _, embedding := range embeddingsResults {
+				embeddingsMessages = append(embeddingsMessages, claude.Message{
+					Speaker: claude.Human,
+					Text:    fmt.Sprintf("Use the following text from file `%s`:\n%s", embedding.FileName, embedding.Content),
+				}, claude.Message{Speaker: claude.Assistant, Text: "Ok."})
+			}
+		}
+	}
+	embeddingsMessages, tokensUsed = trimMessages(embeddingsMessages, maxEmbeddingsTokens)
+	tokens -= tokensUsed
+
+	messages = append(messages, embeddingsMessages...)
+	messages = append(messages, currentFileMessages...)
+
+	// Finally, the rest of the tokens can be used for interaction
+	// history, starting from the last interaction.
+	var reversedInteractionHistory []claude.Message
+	for i := len(l.InteractionMemory) - 1; i >= 0 && tokens > 0; i-- {
+		text, tokensUsed := truncateTextStart(l.InteractionMemory[i].Text, tokens)
+		tokens -= tokensUsed
+		reversedInteractionHistory = append(reversedInteractionHistory, claude.Message{
+			Speaker: l.InteractionMemory[i].Speaker,
+			Text:    text,
+		})
+	}
+	// Then interaction history, but append in the correct order
+	reverseSlice(reversedInteractionHistory)
+	messages = append(messages, reversedInteractionHistory...)
+
+	// And finally the actual input
+	messages = append(messages, input...)
+
+	return messages
+}
+
+func (l *SourcegraphLLM) codyDo(filename, filecontents, function, instruction string, codeOnly bool) string {
 	var assistantText string
 	if codeOnly {
 		assistantText = fmt.Sprintf("```%s\n", strings.ToLower(determineLanguage(filename)))
 	}
-	params.Messages = append(params.Messages, codyDoPreamble(filename, filecontents)...)
-	params.Messages = append(params.Messages, l.InteractionMemory...)
-	params.Messages = append(params.Messages,
-		claude.Message{
+	input := []claude.Message{
+		{
 			Speaker: claude.Human,
 			Text: fmt.Sprintf(`%s
 %s`, instruction, function),
 		},
-		claude.Message{
+		{
 			Speaker: claude.Assistant,
 			Text:    assistantText,
-		})
+		},
+	}
+	params := claude.DefaultCompletionParameters(l.AddContext(input, filename, filecontents))
 	implemented, err := l.ClaudeClient.GetCompletion(context.Background(), params, true)
 	if err != nil {
 		return ""
@@ -952,11 +1071,7 @@ Line {number}: {suggestion}`, filename, content),
 	}
 }
 
-func (l *SourcegraphLLM) getMessages(filename string, embeddingResults *embeddings.EmbeddingsSearchResult) []claude.Message {
-	humanMessage := fmt.Sprintf(`You are Cody, an AI-powered coding assistant developed by Sourcegraph. You operate inside a Language Server Protocol implementation. Your task is to help programmers with programming tasks in all programming languages.
-You have access to my currently open files in the editor.
-You will generate suggestions as concisely and clearly as possible.
-You only suggest something if you are certain about your answer.`)
+func (l *SourcegraphLLM) getPreamble() []claude.Message {
 	codyMessage := fmt.Sprintf(`I am Cody, an AI-powered coding assistant developed by Sourcegraph. I operate inside a Language Server Protocol implementation. My task is to help programmers with programming tasks in all programming languages.
 I have access to your currently open files in the editor.
 I will generate suggestions as concisely and clearly as possible.
@@ -965,9 +1080,22 @@ I only suggest something if I am certain about my answer.`)
 		codyMessage += fmt.Sprintf("\nI have knowledge about the %s repository and can answer questions about it.", l.RepoName)
 	}
 	messages := []claude.Message{{
-		Speaker: claude.Human,
-		Text:    humanMessage,
-	}, {
+		Speaker: claude.Assistant,
+		Text:    codyMessage,
+	}}
+
+	return messages
+}
+
+func (l *SourcegraphLLM) getMessages(filename string, embeddingResults *embeddings.EmbeddingsSearchResult) []claude.Message {
+	codyMessage := fmt.Sprintf(`I am Cody, an AI-powered coding assistant developed by Sourcegraph. I operate inside a Language Server Protocol implementation. My task is to help programmers with programming tasks in all programming languages.
+I have access to your currently open files in the editor.
+I will generate suggestions as concisely and clearly as possible.
+I only suggest something if I am certain about my answer.`)
+	if l.RepoName != "" {
+		codyMessage += fmt.Sprintf("\nI have knowledge about the %s repository and can answer questions about it.", l.RepoName)
+	}
+	messages := []claude.Message{{
 		Speaker: claude.Assistant,
 		Text:    codyMessage,
 	}}
