@@ -156,16 +156,11 @@ func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
 	gitURL := getGitURL()
 	if gitURL != "" {
 		repoName := getRepoName(gitURL)
-
-		for _, rn := range settings.Sourcegraph.RepoEmbeddings {
-			if rn == repoName {
-				repoID, err := l.EmbeddingsClient.GetRepoID(repoName)
-				if err != nil {
-				} else {
-					l.RepoID = repoID
-					l.RepoName = rn
-				}
-			}
+		repoID, err := l.EmbeddingsClient.GetRepoID(repoName)
+		// If we had no problem fetching the repo ID, we set the Repo ID and Name
+		if err == nil {
+			l.RepoID = repoID
+			l.RepoName = repoName
 		}
 	}
 
