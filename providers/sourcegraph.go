@@ -495,7 +495,6 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 		retChan, _ := l.ClaudeClient.StreamCompletion(ctx, params, false)
 		var finalMessage string
 		for resp := range retChan {
-			maxWidth := 80
 			if codeOnly {
 				if endCodeIndex := strings.Index(resp, "\n```"); endCodeIndex != -1 {
 					resp = resp[:endCodeIndex]
@@ -506,22 +505,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 			var splitLines []string
 			for _, line := range lines {
 				line = strings.TrimRight(line, " ")
-				words := strings.Split(line, " ")
-				var lineWords []string
-				lineLen := 0
-				for _, word := range words {
-					if lineLen+len(word)+1 < maxWidth {
-						lineWords = append(lineWords, word)
-						lineLen += len(word) + 1
-					} else {
-						splitLines = append(splitLines, strings.Join(lineWords, " "))
-						lineWords = []string{word}
-						lineLen = len(word)
-					}
-				}
-				if len(lineWords) > 0 {
-					splitLines = append(splitLines, strings.Join(lineWords, " "))
-				}
+				splitLines = append(splitLines, strings.TrimRight(line, " "))
 			}
 
 			jsonResponse := struct {
