@@ -145,7 +145,11 @@ func (l *SourcegraphLLM) Initialize(settings types.LLMSPSettings) error {
 	serverClient := embeddings.NewClient(l.URL, l.AccessToken, nil)
 	dotcomClient := embeddings.NewClient(sourcegraphDotComURL, "", nil)
 
-	l.URL = settings.Sourcegraph.URL
+	if settings.Sourcegraph.URL == "" {
+		l.URL = "https://sourcegraph.com"
+	} else {
+		l.URL = settings.Sourcegraph.URL
+	}
 	l.AccessToken = settings.Sourcegraph.AccessToken
 	l.EmbeddingsClient = serverClient
 	l.ClaudeClient = claude.NewClient(l.URL, l.AccessToken, nil)
