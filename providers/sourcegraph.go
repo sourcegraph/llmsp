@@ -465,7 +465,6 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 		conn.Call(ctx, "workspace/applyEdit", editParams, &res)
 
 	case "cody.explain":
-		l.EventLogger.Log("CodyNeovimExtension:codeAction:cody.explain:executed")
 		filename := lsp.DocumentURI(params.Arguments[0].(string))
 		startLine := int(params.Arguments[1].(float64))
 		endLine := int(params.Arguments[2].(float64))
@@ -473,6 +472,11 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 		var codeOnly bool
 		if len(params.Arguments) >= 5 {
 			codeOnly = params.Arguments[4].(bool)
+		}
+		if codeOnly {
+			l.EventLogger.Log("CodyNeovimExtension:codeAction:cody.explain:executed")
+		} else {
+			l.EventLogger.Log("CodyNeovimExtension:codeAction:cody.diff:executed")
 		}
 
 		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
@@ -546,6 +550,7 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 		filename := lsp.DocumentURI(params.Arguments[0].(string))
 		startLine := int(params.Arguments[1].(float64))
 		endLine := int(params.Arguments[2].(float64))
+		l.EventLogger.Log("CodyNeovimExtension:codeAction:cody.remember:executed")
 
 		funcSnippet := getFileSnippet(l.FileMap[filename], int(startLine), int(endLine))
 
@@ -569,11 +574,13 @@ func (l *SourcegraphLLM) ExecuteCommand(ctx context.Context, params types.Execut
 		return &msJson, nil
 
 	case "cody.forget":
+		l.EventLogger.Log("CodyNeovimExtension:codeAction:cody.forget:executed")
 		l.InteractionMemory = nil
 
 		return nil, nil
 
 	case "cody.chat/message":
+		l.EventLogger.Log("CodyNeovimExtension:codeAction:cody.chat:executed")
 		filename := lsp.DocumentURI(params.Arguments[0].(string))
 		message := params.Arguments[1].(string)
 
