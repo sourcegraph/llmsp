@@ -124,8 +124,7 @@ func (c *Client) GetCompletion(ctx context.Context, params *CompletionParameters
 	}
 
 	var completion completions
-	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(&completion); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&completion); err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()

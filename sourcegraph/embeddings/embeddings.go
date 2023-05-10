@@ -7,19 +7,16 @@ import (
 	"strings"
 )
 
+type EmbeddingsResult struct {
+	FileName  string
+	StartLine int
+	EndLine   int
+	Content   string
+}
+
 type EmbeddingsSearchResult struct {
-	CodeResults []struct {
-		FileName  string
-		StartLine int
-		EndLine   int
-		Content   string
-	}
-	TextResults []struct {
-		FileName  string
-		StartLine int
-		EndLine   int
-		Content   string
-	}
+	CodeResults []EmbeddingsResult
+	TextResults []EmbeddingsResult
 }
 
 type EmbeddingsResponse struct {
@@ -64,6 +61,20 @@ type searchEmbeddingsQuery struct {
 type getRepoIDQuery struct {
 	Query     string            `json:"query"`
 	Variables repoNameVariables `json:"variables"`
+}
+
+type logEventQuery struct {
+	Query     string            `json:"query"`
+	Variables logEventVariables `json:"variables"`
+}
+
+type logEventVariables struct {
+	Event          string `json:"event"`
+	UserCookieID   string `json:"userCookieID"`
+	Source         string `json:"source"`
+	Url            string `json:"url"`
+	Argument       string `json:"argument"`
+	PublicArgument string `json:"publicArgument"`
 }
 
 type repoNameVariables struct {
@@ -131,6 +142,33 @@ func (c *Client) GetRepoID(repoName string) (string, error) {
 	return repoIDResponse.Data.Repository.ID, nil
 }
 
+func (c *Client) LogEvent(eventName string, uid string, argument string, publicArgument string) error {
+	q := logEventQuery{
+		Query: `mutation LogEventMutation($event: String!, $userCookieID: String!, $url: String!, $source: EventSource!, $argument: String, $publicArgument: String) {
+    logEvent(
+		event: $event
+		userCookieID: $userCookieID
+		url: $url
+		source: $source
+		argument: $argument
+		publicArgument: $publicArgument
+    ) {
+		alwaysNil
+	}
+}`,
+		Variables: logEventVariables{
+			Event:          eventName,
+			UserCookieID:   uid,
+			Url:            "",
+			Source:         "IDEEXTENSION",
+			PublicArgument: publicArgument,
+			Argument:       argument,
+		},
+	}
+
+	return c.sendGraphQLRequest(q, nil)
+}
+
 // sendGraphQLRequest sends a GraphQL request and parses the response.
 func (c *Client) sendGraphQLRequest(request interface{}, response interface{}) error {
 	reqBody, err := json.Marshal(request)
@@ -143,7 +181,9 @@ func (c *Client) sendGraphQLRequest(request interface{}, response interface{}) e
 		return err
 	}
 	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("Authorization", "token "+c.accessToken)
+	if c.accessToken != "" {
+		req.Header.Add("Authorization", "token "+c.accessToken)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -151,5 +191,9 @@ func (c *Client) sendGraphQLRequest(request interface{}, response interface{}) e
 	}
 	defer resp.Body.Close()
 
-	return json.NewDecoder(resp.Body).Decode(response)
+	if response != nil {
+		return json.NewDecoder(resp.Body).Decode(response)
+	}
+
+	return nil
 }

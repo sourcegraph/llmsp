@@ -74,5 +74,5 @@ func main() {
 	server := lsp.NewServer(url, token)
 	server.AutoComplete = autoComplete
 
-	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), jsonrpc2.AsyncHandler(server.Router)).DisconnectNotify()
+	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), jsonrpc2.AsyncHandler(server)).DisconnectNotify()
 }

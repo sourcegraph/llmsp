@@ -9,10 +9,11 @@ type LLMSPSettings struct {
 }
 
 type SourcegraphSettings struct {
-	URL            string   `json:"url"`
-	AccessToken    string   `json:"accessToken"`
-	AutoComplete   string   `json:"autoComplete"`
-	RepoEmbeddings []string `json:"repos"`
+	URL              string   `json:"url"`
+	AccessToken      string   `json:"accessToken"`
+	AutoComplete     string   `json:"autoComplete"`
+	RepoEmbeddings   []string `json:"repos"`
+	AnonymousUIDFile string   `json:"uidFile"`
 }
 
 type LLMSPConfig struct {
@@ -190,4 +191,10 @@ type CodeActionParams struct {
 	TextDocument lsp.TextDocumentIdentifier `json:"textDocument"`
 	Range        lsp.Range                  `json:"range"`
 	Context      CodeActionContext          `json:"context"`
+}
+
+type ExecuteCommandParams struct {
+	Command       string        `json:"command"`
+	Arguments     []interface{} `json:"arguments,omitempty"`
+	WorkDoneToken string        `json:"workDoneToken"`
 }
