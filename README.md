@@ -1,4 +1,6 @@
-# LLMSP (very WIP)
+# LLMSP `EXPERIMENTAL`
+
+> NOTE: This is highly experimental. LLMSP can change at any point, might be "unreleased", we don't guarantee backwards compatibility. It's a proof-of-concept. 
 
 POC to explore using LLMs to provide feedback in text editors using the Language Server Protocol.
 
